@@ -91,7 +91,8 @@ uvx repoward init --repo your-org/your-repo
 The starter policy gives the server read-only tools. Add `--role contributor` for write tools. Files
 live in `~/.repoward`, or wherever `REPOWARD_HOME` points. An existing policy is never overwritten.
 
-Then add it to your MCP client, and use a token set up as described in [GitHub token](#github-token).
+Run this first, because the server will not start without a policy. Then add it to your MCP client,
+and use a token set up as described in [GitHub token](#github-token).
 Avoid committing a config that holds a real token.
 
 <details open>
@@ -198,6 +199,9 @@ In `~/.gemini/settings.json`, reading the token from your environment:
 </details>
 
 Any other client that can launch a stdio MCP server runs the same command: `uvx repoward serve`.
+
+If your client reports that the server failed to connect, run `uvx repoward serve` in a terminal
+to see why. The usual cause is that `repoward init` has not been run yet, so there is no policy.
 
 Useful commands:
 

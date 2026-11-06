@@ -32,6 +32,12 @@ stdio:
 """
 
 
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test may touch the real home directory."""
+    monkeypatch.setenv("REPOWARD_HOME", str(tmp_path / "default-home"))
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
