@@ -36,6 +36,16 @@ _REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+# The first four patterns are specific enough to block a write on. The labelled ones after them
+# would also match ordinary code such as API_KEY = os.environ[...], so they only redact.
+_HIGH_CONFIDENCE_SECRETS = tuple(pattern for pattern, _ in _REPLACEMENTS[:4])
+
+
+def contains_secret(text: str) -> bool:
+    """True if outgoing text holds something that is almost certainly a credential."""
+    return any(pattern.search(text) for pattern in _HIGH_CONFIDENCE_SECRETS)
+
+
 def redact_text(text: str) -> str:
     """Replace known secret patterns, and lone surrogates that cannot be stored as UTF-8."""
     cleaned = text.encode("utf-8", "replace").decode("utf-8")

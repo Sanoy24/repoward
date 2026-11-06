@@ -7,6 +7,7 @@ from enum import StrEnum
 from repoward.catalog import RiskClass
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal
+from repoward.sanitize import contains_secret
 
 
 class Effect(StrEnum):
@@ -21,6 +22,11 @@ class Target:
 
     repo: str | None = None
     paths: Sequence[str] = ()
+    write_branches: Sequence[str] = ()
+    non_draft: bool = False
+    commit_files: int = 0
+    commit_bytes: int = 0
+    outbound: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -60,6 +66,32 @@ def decide(
     for path in target.paths:
         if compiled.path_is_denied(path):
             return Decision(Effect.DENY, "paths.deny", "A requested path is not permitted.")
+    prefix = compiled.policy.branches.write_prefix
+    if any(not branch.startswith(prefix) for branch in target.write_branches):
+        return Decision(
+            Effect.DENY,
+            "branches.write_prefix",
+            f"Writes are only permitted on branches starting with {prefix}",
+        )
+    if target.non_draft and not compiled.policy.pull_requests.allow_non_draft:
+        return Decision(
+            Effect.DENY,
+            "pull_requests.allow_non_draft",
+            "Only draft pull requests are permitted.",
+        )
+    limits = role.commit_limits
+    if target.commit_files > limits.max_files or target.commit_bytes > limits.max_bytes:
+        return Decision(
+            Effect.DENY,
+            "roles.commit_limits",
+            f"Commits are limited to {limits.max_files} files and {limits.max_bytes} bytes.",
+        )
+    if any(contains_secret(text) for text in target.outbound):
+        return Decision(
+            Effect.DENY,
+            "secrets.outbound",
+            "The content appears to contain a credential, so it was not sent.",
+        )
     if tool in role.require_approval:
         return Decision(
             Effect.APPROVAL_REQUIRED,

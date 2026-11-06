@@ -1,6 +1,6 @@
 """Strict policy loading. Every problem is reported with its line number."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from repoward.canonical import sha256_hex
 from repoward.catalog import TOOL_CATALOG, RiskClass
-from repoward.policy.models import Policy
+from repoward.policy.models import CommitLimits, Policy
 
 _MAX_POLICY_BYTES = 1_000_000
 _Loc = tuple[str | int, ...]
@@ -33,6 +33,7 @@ class PolicyError(Exception):
 class ResolvedRole:
     tools: frozenset[str]
     require_approval: frozenset[str]
+    commit_limits: CommitLimits = field(default_factory=CommitLimits)
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,7 @@ def _resolve_roles(policy: Policy, problems: list[tuple[str, _Loc]]) -> dict[str
         role = policy.roles[name]
         tools = set(role.tools)
         approvals = set(role.require_approval)
+        limits = role.commit_limits
         if role.inherits is not None:
             if role.inherits == name or role.inherits in chain:
                 fail(name, f"role '{name}' has an inheritance cycle")
@@ -130,7 +132,8 @@ def _resolve_roles(policy: Policy, problems: list[tuple[str, _Loc]]) -> dict[str
                 return None
             tools |= parent.tools
             approvals |= parent.require_approval
-        result = ResolvedRole(frozenset(tools), frozenset(approvals))
+            limits = limits or parent.commit_limits
+        result = ResolvedRole(frozenset(tools), frozenset(approvals), limits or CommitLimits())
         resolved[name] = result
         return result
 
@@ -142,10 +145,10 @@ def _resolve_roles(policy: Policy, problems: list[tuple[str, _Loc]]) -> dict[str
 def _semantic_problems(policy: Policy, resolved: dict[str, ResolvedRole]) -> list[tuple[str, _Loc]]:
     problems: list[tuple[str, _Loc]] = []
     for name, role in policy.roles.items():
-        for field, tools in (("tools", role.tools), ("require_approval", role.require_approval)):
+        for section, tools in (("tools", role.tools), ("require_approval", role.require_approval)):
             for index, tool in enumerate(tools):
                 if tool not in TOOL_CATALOG:
-                    problems.append((f"unknown tool '{tool}'", ("roles", name, field, index)))
+                    problems.append((f"unknown tool '{tool}'", ("roles", name, section, index)))
         effective = resolved.get(name)
         if effective is None:
             continue
