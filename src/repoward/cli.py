@@ -23,6 +23,16 @@ from repoward.flow import FlowStore, FlowStoreError
 from repoward.policy.loader import PolicyError, load_policy
 from repoward.sanitize import display_safe
 from repoward.server import run_stdio
+from repoward.setup import (
+    APPROVALS_FILE,
+    AUDIT_FILE,
+    FLOW_FILE,
+    POLICY_FILE,
+    STARTER_ROLES,
+    client_config,
+    default_dir,
+    write_starter,
+)
 
 
 def _error(message: str) -> None:
@@ -56,30 +66,78 @@ def _print_report(report: VerifyReport) -> int:
 
 
 def _validate_policy(args: argparse.Namespace) -> int:
+    path = args.path or default_dir() / POLICY_FILE
     try:
-        compiled = load_policy(args.path)
+        compiled = load_policy(path)
     except PolicyError as exc:
-        _print_policy_error(args.path, exc)
+        _print_policy_error(path, exc)
         return 1
     print(f"OK: {len(compiled.roles)} roles, sha256 {compiled.sha256}")
     return 0
 
 
 def _serve(args: argparse.Namespace) -> int:
+    directory = args.dir or default_dir()
+    policy_path = args.policy or directory / POLICY_FILE
+    if not policy_path.exists():
+        _error(f"no policy at {policy_path}. Create one with: repoward init --repo owner/name")
+        return 1
     try:
-        compiled = load_policy(args.policy)
+        compiled = load_policy(policy_path)
         key = load_hmac_key(DEFAULT_KEY_ENV)
     except PolicyError as exc:
-        _print_policy_error(args.policy, exc)
+        _print_policy_error(policy_path, exc)
         return 1
     except AuditKeyError as exc:
         _error(str(exc))
         return 1
     try:
-        run_stdio(compiled, args.audit, args.approvals, args.flow, key)
+        directory.mkdir(parents=True, exist_ok=True)
+        run_stdio(
+            compiled,
+            args.audit or directory / AUDIT_FILE,
+            args.approvals or directory / APPROVALS_FILE,
+            args.flow or directory / FLOW_FILE,
+            key,
+        )
+    except OSError as exc:
+        _error(f"cannot use {directory}: {exc.strerror}")
+        return 1
     except (ApprovalStoreError, FlowStoreError) as exc:
         _error(str(exc))
         return 1
+    return 0
+
+
+def _init(args: argparse.Namespace) -> int:
+    directory = args.dir or default_dir()
+    try:
+        path = write_starter(directory, args.repo, args.role)
+    except FileExistsError:
+        _error(f"{directory / POLICY_FILE} already exists, and it was left unchanged")
+        return 1
+    except PolicyError as exc:
+        for issue in exc.issues:
+            _error(issue.message)
+        return 1
+    except OSError as exc:
+        _error(f"cannot write to {directory}: {exc.strerror}")
+        return 1
+    print(f"Created {path}, with role '{args.role}'.\n")
+    print("Next steps:\n")
+    print("1. Create a fine-grained GitHub token limited to those repositories:")
+    print("   https://github.com/settings/personal-access-tokens/new\n")
+    print("2. Add this to your MCP client's config, replacing <your-token>:\n")
+    print(client_config(directory))
+    print(
+        "\n3. Protect your default branch with a ruleset that has no bypass for the token's owner."
+    )
+    print("\nImportant: this is not a security boundary for an agent that has a shell running as")
+    print(
+        "the same OS user. It could use git directly, read the token or approve its own requests."
+    )
+    print("Separate them, or give the agent MCP tools only. Details:")
+    print("https://github.com/Sanoy24/repoward/blob/main/docs/THREAT_MODEL.md")
     return 0
 
 
@@ -89,7 +147,8 @@ def _audit_key(args: argparse.Namespace) -> bytes | None:
 
 def _audit_verify(args: argparse.Namespace) -> int:
     try:
-        return _print_report(verify_log(args.file, _audit_key(args), args.anchor))
+        path = args.file or default_dir() / AUDIT_FILE
+        return _print_report(verify_log(path, _audit_key(args), args.anchor))
     except AuditKeyError as exc:
         _error(str(exc))
         return 1
@@ -97,10 +156,32 @@ def _audit_verify(args: argparse.Namespace) -> int:
 
 def _audit_checkpoint(args: argparse.Namespace) -> int:
     try:
-        return _print_report(write_checkpoint(args.file, args.out, _audit_key(args)))
+        path = args.file or default_dir() / AUDIT_FILE
+        return _print_report(write_checkpoint(path, args.out, _audit_key(args)))
     except AuditKeyError as exc:
         _error(str(exc))
         return 1
+
+
+def _in_home(path: Path | None, filename: str) -> Path:
+    """Use the given path, or a file in the home directory, which is created if needed."""
+    if path is not None:
+        return path
+    directory = default_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / filename
+
+
+def _approval_store(args: argparse.Namespace) -> ApprovalStore:
+    return ApprovalStore(_in_home(args.db, APPROVALS_FILE))
+
+
+def _flow_store(args: argparse.Namespace) -> FlowStore:
+    return FlowStore(_in_home(args.db, FLOW_FILE))
+
+
+def _audit_path(args: argparse.Namespace) -> Path:
+    return _in_home(args.audit, AUDIT_FILE)
 
 
 def _when(timestamp: float | None) -> str:
@@ -127,7 +208,7 @@ def _print_approval(approval: Approval) -> None:
 
 
 def _approvals_list(args: argparse.Namespace) -> int:
-    items = ApprovalStore(args.db).list(include_all=args.all)
+    items = _approval_store(args).list(include_all=args.all)
     if not items:
         print("No requests.")
     for item in items:
@@ -139,7 +220,7 @@ def _approvals_list(args: argparse.Namespace) -> int:
 
 
 def _approvals_show(args: argparse.Namespace) -> int:
-    approval = ApprovalStore(args.db).get(args.id)
+    approval = _approval_store(args).get(args.id)
     if approval is None:
         _error("no such request")
         return 1
@@ -149,7 +230,7 @@ def _approvals_show(args: argparse.Namespace) -> int:
 
 def _decide(args: argparse.Namespace, approved: bool) -> int:
     """Audit first: if the decision cannot be recorded, it is not made."""
-    store = ApprovalStore(args.db)
+    store = _approval_store(args)
     approval = store.get(args.id)
     if approval is None:
         _error("no such request")
@@ -159,7 +240,7 @@ def _decide(args: argparse.Namespace, approved: bool) -> int:
         return 1
     decided_by = getpass.getuser()
     try:
-        audit = AuditLog(args.audit, load_hmac_key(DEFAULT_KEY_ENV))
+        audit = AuditLog(_audit_path(args), load_hmac_key(DEFAULT_KEY_ENV))
         audit.append(
             {
                 "event": "approval_decision",
@@ -191,7 +272,7 @@ def _approvals_deny(args: argparse.Namespace) -> int:
 
 
 def _flow_status(args: argparse.Namespace) -> int:
-    labels = FlowStore(args.db).active()
+    labels = _flow_store(args).active()
     if not labels:
         print("No active labels.")
     for label in labels:
@@ -204,9 +285,9 @@ def _flow_status(args: argparse.Namespace) -> int:
 
 def _flow_reset(args: argparse.Namespace) -> int:
     """Audit first: if the reset cannot be recorded, it does not happen."""
-    store = FlowStore(args.db)
+    store = _flow_store(args)
     try:
-        AuditLog(args.audit, load_hmac_key(DEFAULT_KEY_ENV)).append(
+        AuditLog(_audit_path(args), load_hmac_key(DEFAULT_KEY_ENV)).append(
             {
                 "event": "flow_reset",
                 "principal": args.principal,
@@ -225,34 +306,45 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=version("repoward"))
     commands = parser.add_subparsers(dest="command", required=True)
 
+    init = commands.add_parser("init", help="create a safe starter policy")
+    init.add_argument(
+        "--repo", action="append", required=True, help="owner/name to allow; repeatable"
+    )
+    init.add_argument(
+        "--role", choices=STARTER_ROLES, default="reader", help="role for this server"
+    )
+    init.add_argument("--dir", type=Path, help="directory for repoward's files")
+    init.set_defaults(run=_init)
+
     serve = commands.add_parser("serve", help="serve MCP over stdio")
-    serve.add_argument("--policy", type=Path, required=True, help="policy YAML file")
-    serve.add_argument("--audit", type=Path, required=True, help="audit JSONL file")
-    serve.add_argument("--approvals", type=Path, required=True, help="approvals database")
-    serve.add_argument("--flow", type=Path, required=True, help="flow guard database")
+    serve.add_argument("--dir", type=Path, help="directory for repoward's files")
+    serve.add_argument("--policy", type=Path, help="policy YAML file")
+    serve.add_argument("--audit", type=Path, help="audit JSONL file")
+    serve.add_argument("--approvals", type=Path, help="approvals database")
+    serve.add_argument("--flow", type=Path, help="flow guard database")
     serve.set_defaults(run=_serve)
 
     validate = commands.add_parser("validate-policy", help="check a policy file")
-    validate.add_argument("path", type=Path)
+    validate.add_argument("path", type=Path, nargs="?")
     validate.set_defaults(run=_validate_policy)
 
     audit = commands.add_parser("audit", help="work with audit logs")
     audit_commands = audit.add_subparsers(dest="audit_command", required=True)
 
     verify = audit_commands.add_parser("verify", help="check a log's hash chain")
-    verify.add_argument("file", type=Path)
+    verify.add_argument("file", type=Path, nargs="?")
     verify.add_argument("--anchor", type=Path, help="anchor file from audit checkpoint")
     verify.add_argument("--key-env", help="environment variable holding the HMAC key")
     verify.set_defaults(run=_audit_verify)
 
     checkpoint = audit_commands.add_parser("checkpoint", help="record the log's current tip")
-    checkpoint.add_argument("file", type=Path)
+    checkpoint.add_argument("file", type=Path, nargs="?")
     checkpoint.add_argument("--out", type=Path, required=True, help="anchor file to append to")
     checkpoint.add_argument("--key-env", help="environment variable holding the HMAC key")
     checkpoint.set_defaults(run=_audit_checkpoint)
 
     approvals = commands.add_parser("approvals", help="review requests waiting for a human")
-    approvals.add_argument("--db", type=Path, required=True, help="approvals database")
+    approvals.add_argument("--db", type=Path, help="approvals database")
     approval_commands = approvals.add_subparsers(dest="approvals_command", required=True)
 
     listing = approval_commands.add_parser("list", help="show pending requests")
@@ -266,13 +358,13 @@ def _build_parser() -> argparse.ArgumentParser:
     for name, handler in (("approve", _approvals_approve), ("deny", _approvals_deny)):
         decision = approval_commands.add_parser(name, help=f"{name} a request")
         decision.add_argument("id")
-        decision.add_argument("--audit", type=Path, required=True, help="audit JSONL file")
+        decision.add_argument("--audit", type=Path, help="audit JSONL file")
         decision.set_defaults(run=handler)
 
     flow = commands.add_parser(
         "flow", help="inspect or clear what agents are marked as having read"
     )
-    flow.add_argument("--db", type=Path, required=True, help="flow guard database")
+    flow.add_argument("--db", type=Path, help="flow guard database")
     flow_commands = flow.add_subparsers(dest="flow_command", required=True)
 
     status = flow_commands.add_parser("status", help="show active labels")
@@ -280,7 +372,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     reset = flow_commands.add_parser("reset", help="clear labels so writes are allowed again")
     reset.add_argument("--principal", help="only this principal (default: everyone)")
-    reset.add_argument("--audit", type=Path, required=True, help="audit JSONL file")
+    reset.add_argument("--audit", type=Path, help="audit JSONL file")
     reset.set_defaults(run=_flow_reset)
     return parser
 

@@ -18,12 +18,6 @@ def test_command_is_required() -> None:
     assert exit_info.value.code == 2
 
 
-def test_serve_requires_policy_and_audit() -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        main(["serve"])
-    assert exit_info.value.code == 2
-
-
 def test_serve_refuses_a_bad_policy_before_starting(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
