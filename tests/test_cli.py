@@ -29,7 +29,20 @@ def test_serve_refuses_a_bad_policy_before_starting(
 ) -> None:
     bad = tmp_path / "bad.yaml"
     bad.write_text("default: allow\n", encoding="utf-8")
-    assert main(["serve", "--policy", str(bad), "--audit", str(tmp_path / "a.jsonl")]) == 1
+    assert (
+        main(
+            [
+                "serve",
+                "--policy",
+                str(bad),
+                "--audit",
+                str(tmp_path / "a.jsonl"),
+                "--approvals",
+                str(tmp_path / "a.db"),
+            ]
+        )
+        == 1
+    )
     assert "default" in capsys.readouterr().err
 
 
@@ -40,5 +53,18 @@ def test_serve_refuses_a_short_key(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("REPOWARD_AUDIT_HMAC_KEY", "short")
-    assert main(["serve", "--policy", str(policy_file), "--audit", str(tmp_path / "a.jsonl")]) == 1
+    assert (
+        main(
+            [
+                "serve",
+                "--policy",
+                str(policy_file),
+                "--audit",
+                str(tmp_path / "a.jsonl"),
+                "--approvals",
+                str(tmp_path / "a.db"),
+            ]
+        )
+        == 1
+    )
     assert "at least 32 bytes" in capsys.readouterr().err

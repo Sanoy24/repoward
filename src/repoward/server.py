@@ -21,12 +21,13 @@ from mcp.types import (
 )
 
 from repoward.adapters.github import GitHubClient
+from repoward.approvals.store import ApprovalStore
 from repoward.audit import AuditLog
 from repoward.pipeline import Pipeline, alert
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal, local_principal
 from repoward.registry import ToolRegistry
-from repoward.tools import ci_read, github_read, github_write, system
+from repoward.tools import ci_read, github_dangerous, github_read, github_write, system
 
 
 def build_registry(policy: CompiledPolicy, github: GitHubClient) -> ToolRegistry:
@@ -35,6 +36,7 @@ def build_registry(policy: CompiledPolicy, github: GitHubClient) -> ToolRegistry
     github_read.register(registry, github, policy)
     ci_read.register(registry, github)
     github_write.register(registry, github)
+    github_dangerous.register(registry, github)
     return registry
 
 
@@ -65,11 +67,17 @@ def create_server(registry: ToolRegistry, pipeline: Pipeline, principal: Princip
     )
 
 
-def run_stdio(policy: CompiledPolicy, audit_path: Path, hmac_key: bytes | None) -> None:
+def run_stdio(
+    policy: CompiledPolicy, audit_path: Path, approvals_path: Path, hmac_key: bytes | None
+) -> None:
     """Serve over stdio until the client closes the connection."""
     github = GitHubClient(os.environ.get("GITHUB_TOKEN"))
     registry = build_registry(policy, github)
-    pipeline = Pipeline(policy, registry, AuditLog(audit_path, hmac_key))
+    rules = policy.policy.approvals
+    approvals = ApprovalStore(
+        approvals_path, rules.ttl_minutes * 60.0, rules.max_pending_per_principal
+    )
+    pipeline = Pipeline(policy, registry, AuditLog(audit_path, hmac_key), approvals=approvals)
     server = create_server(registry, pipeline, local_principal(policy.policy.stdio.role))
 
     async def serve() -> None:
