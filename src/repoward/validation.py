@@ -12,6 +12,7 @@ from pydantic import AfterValidator
 _REPO = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}")
 _DRIVE = re.compile(r"[A-Za-z]:")
 _MAX_PATH_CHARS = 4096
+_REF = re.compile(r"[A-Za-z0-9._/-]{1,200}")
 
 
 def validate_repo(value: str) -> str:
@@ -42,5 +43,21 @@ def normalize_path(value: str) -> str:
     return normalized
 
 
+def validate_ref(value: str) -> str:
+    """Accept a branch name, tag or commit SHA, following git's reference rules."""
+    if not _REF.fullmatch(value):
+        raise ValueError("must be a valid branch, tag or commit SHA")
+    if (
+        ".." in value
+        or "//" in value
+        or "/." in value
+        or value.startswith(("-", "/", ".", "refs/"))
+        or value.endswith(("/", ".", ".lock"))
+    ):
+        raise ValueError("must be a valid branch, tag or commit SHA")
+    return value
+
+
 RepoName = Annotated[str, AfterValidator(validate_repo)]
 RepoPath = Annotated[str, AfterValidator(normalize_path)]
+GitRef = Annotated[str, AfterValidator(validate_ref)]

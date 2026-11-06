@@ -7,6 +7,7 @@ import pytest
 from mcp import Client, StdioServerParameters
 from mcp.types import TextContent
 
+from repoward.adapters.github import GitHubClient
 from repoward.audit import AuditLog, verify_log
 from repoward.pipeline import Pipeline
 from repoward.policy.loader import CompiledPolicy
@@ -23,7 +24,7 @@ def audit_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 async def client(policy: CompiledPolicy, audit_path: Path) -> AsyncIterator[Client]:
-    registry = build_registry()
+    registry = build_registry(policy, GitHubClient(None))
     pipeline = Pipeline(policy, registry, AuditLog(audit_path))
     server = create_server(registry, pipeline, Principal("test", "reader"))
     async with Client(server, raise_exceptions=True) as connected:
@@ -37,8 +38,18 @@ def _text(content: object) -> str:
 
 async def test_lists_ping_tool(client: Client) -> None:
     result = await client.list_tools()
-    assert [tool.name for tool in result.tools] == ["ping"]
-    assert result.tools[0].input_schema["additionalProperties"] is False
+    names = [tool.name for tool in result.tools]
+    assert names == sorted(names)
+    assert names == [
+        "ci_get_job_logs",
+        "ci_get_status",
+        "github_get_file",
+        "github_get_issue",
+        "github_list_issues",
+        "github_search_code",
+        "ping",
+    ]
+    assert all(tool.input_schema["additionalProperties"] is False for tool in result.tools)
 
 
 async def test_ping_is_governed_end_to_end(client: Client, audit_path: Path) -> None:
@@ -66,7 +77,7 @@ async def test_invalid_arguments_are_readable_and_audited(client: Client, audit_
 
 
 async def test_role_without_ping_is_refused(policy: CompiledPolicy, audit_path: Path) -> None:
-    registry = build_registry()
+    registry = build_registry(policy, GitHubClient(None))
     pipeline = Pipeline(policy, registry, AuditLog(audit_path))
     server = create_server(registry, pipeline, Principal("test", "ghost"))
     async with Client(server, raise_exceptions=True) as connected:
@@ -78,7 +89,7 @@ async def test_role_without_ping_is_refused(policy: CompiledPolicy, audit_path: 
 async def test_pipeline_crash_returns_a_readable_error(
     policy: CompiledPolicy, audit_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    registry = build_registry()
+    registry = build_registry(policy, GitHubClient(None))
     pipeline = Pipeline(policy, registry, AuditLog(audit_path))
 
     async def explode(*_: object) -> None:
@@ -109,7 +120,7 @@ async def test_real_stdio_process_is_governed(policy_file: Path, audit_path: Pat
         tools = await client.list_tools()
         result = await client.call_tool("ping", {})
         denied = await client.call_tool("github_merge_pull_request", {})
-    assert [tool.name for tool in tools.tools] == ["ping"]
+    assert "ping" in [tool.name for tool in tools.tools]
     assert _text(result.content[0]) == "pong"
     assert denied.is_error
     report = verify_log(audit_path)
