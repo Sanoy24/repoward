@@ -64,6 +64,10 @@ What it does not do:
 - **Dangerous tools:** `github_merge_pull_request` and `github_delete_branch` need human approval.
   An approval covers one exact call at one exact commit, works once and expires. Merging is off
   until a policy turns it on.
+- **GitHub App tokens (optional):** each call gets a short-lived token limited to one repository and
+  only the permissions that tool needs, and GitHub enforces those limits itself.
+- **Pull request review as approval (optional):** a merge can be approved by a real GitHub review
+  of the exact commit.
 - **Untrusted content handling:** text from GitHub users comes back wrapped in a tag with a random
   id per response, after invisible characters, hidden HTML comments and images are removed and
   secrets are redacted. This is a mitigation, not a guarantee: a model can still be fooled, which
@@ -71,7 +75,6 @@ What it does not do:
 
 ## Planned
 
-- **Least-privilege tokens:** short-lived GitHub App tokens scoped to each call.
 
 ## Who it is for
 
@@ -224,6 +227,26 @@ uvx repoward approvals approve <id>
 The agent then repeats the same call. Pushing new commits changes the commit the call names, so
 the old approval no longer applies, and GitHub refuses a merge whose head has moved.
 
+### Approving with a pull request review
+
+A merge can also be approved by a normal GitHub review, so the approver needs their own GitHub
+identity and not just access to this machine. Turn it on in your policy:
+
+```yaml
+approvals:
+  github_review: { enabled: true, min_permission: write }
+```
+
+A review counts only if it approves the exact commit being merged, comes from a user other than the
+pull request's author and this server's own identity, and that user has the required access. Any
+reviewer's outstanding request for changes blocks it. Each check is made again at merge time.
+
+This needs the server to act as a GitHub App or a separate bot account. With your own token, your
+own reviews are refused. If an agent can reach the reviewer's GitHub credentials, such as a logged-in
+`gh` on the same machine, this protection is lost.
+
+### Limits of approvals
+
 If the agent runs as the same OS user as this server and has a shell, it could run these commands
 or edit the database itself. Run the server and its files under a separate user or in a container
 for approvals to mean anything.
@@ -265,6 +288,37 @@ Limits to know about:
 - `github_merge_pull_request` does not support merge queues or stacked pull requests.
 - `github_delete_branch` checks the commit and then deletes, because GitHub has no conditional
   delete, so a small window remains between the two.
+
+### Using a GitHub App instead
+
+A [GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
+gives each tool call its own short-lived token, limited to one repository and that tool's
+permissions. The App also has its own identity, which review approvals need.
+
+Register an App with webhooks off and only the permissions you need, then install it on the
+repositories in your policy, and generate a private key:
+
+| Permission | Level | Used for |
+| --- | --- | --- |
+| Contents | Read, or write for write tools | Files, search, branches, commits, merges |
+| Issues | Read, or write for comments | Issues and comments |
+| Pull requests | Read, or write for write tools | Pull requests, reviews and comments |
+| Actions | Read | CI status and job logs |
+| Commit statuses | Read | CI status |
+
+Then set this in your policy, and point `GITHUB_APP_PRIVATE_KEY_FILE` at the key in the server's
+environment:
+
+```yaml
+github_auth:
+  mode: app
+  client_id: Iv1.your-client-id
+  installation_id: 12345678
+```
+
+The private key is a long-lived secret that can issue new tokens. Keep it away from the agent. A
+`contents: write` token can still push to any branch of that repository, so the ruleset advice above
+still applies.
 
 ## What the audit log proves
 
