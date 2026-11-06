@@ -18,7 +18,7 @@ from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal
 from repoward.ratelimit import RateLimiter
 from repoward.registry import ToolError, ToolRegistry
-from repoward.sanitize import redact_for_audit, redact_text, truncate_text
+from repoward.sanitize import redact_for_audit, redact_text, render_output
 
 MAX_OUTPUT_CHARS = 100_000
 _MAX_VALIDATION_ERRORS = 5
@@ -135,7 +135,7 @@ class Pipeline:
         error: str | None = None
         try:
             output = await spec.handler(validated)
-            result = _result(truncate_text(redact_text(output.text), MAX_OUTPUT_CHARS))
+            result = _result(render_output(output.text, output.untrusted, MAX_OUTPUT_CHARS))
         except ToolError as exc:
             status = "error"
             error = redact_text(str(exc))

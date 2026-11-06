@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from repoward.catalog import TOOL_CATALOG, RiskClass
 from repoward.policy.engine import Target
+from repoward.sanitize import UntrustedContent
 
 
 class ToolInput(BaseModel):
@@ -18,7 +19,10 @@ class ToolInput(BaseModel):
 
 @dataclass(frozen=True)
 class ToolOutput:
+    """`text` is written by this server. Anything GitHub users control goes in `untrusted`."""
+
     text: str
+    untrusted: tuple[UntrustedContent, ...] = ()
 
 
 class ToolError(Exception):
