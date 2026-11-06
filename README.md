@@ -47,7 +47,7 @@ What it does not do:
 - Maintainers of public repositories will see more approval requests. That is the cost of the
   default, and `trusted_associations` is configurable.
 
-## What works today
+## Features
 
 - **Policy:** default-deny YAML with roles, repository allowlists and path denylists. See
   [policy.example.yaml](https://github.com/Sanoy24/repoward/blob/main/policy.example.yaml).
@@ -68,6 +68,7 @@ What it does not do:
   only the permissions that tool needs, and GitHub enforces those limits itself.
 - **Pull request review as approval (optional):** a merge can be approved by a real GitHub review
   of the exact commit.
+- **Pull request receipts (optional):** a commit status summarizing how the agent's run has gone.
 - **Policy replay:** see which past decisions a policy edit would change before you deploy it.
 - **Untrusted content handling:** text from GitHub users comes back wrapped in a tag with a random
   id per response, after invisible characters, hidden HTML comments and images are removed and
@@ -302,7 +303,7 @@ repositories in your policy, and generate a private key:
 | Issues | Read, or write for comments | Issues and comments |
 | Pull requests | Read, or write for write tools | Pull requests, reviews and comments |
 | Actions | Read | CI status and job logs |
-| Commit statuses | Read | CI status |
+| Commit statuses | Read, or write for receipts | CI status and receipts |
 
 Then set this in your policy, and point `GITHUB_APP_PRIVATE_KEY_FILE` at the key in the server's
 environment:
@@ -332,6 +333,37 @@ Set `REPOWARD_AUDIT_HMAC_KEY` to use HMAC, and store the output of `repoward aud
 somewhere the server cannot write. Comment bodies, titles, commit messages and file contents are
 logged as a length and hash rather than as text. A crash during a write leaves an incomplete last line, and new
 writes are then refused until an operator repairs the log. Secret redaction is best effort.
+
+## Pull request receipts
+
+Reviewers of an agent's pull request can see how its run has gone. Turn this on in your policy:
+
+```yaml
+receipts:
+  enabled: true
+```
+
+After each commit or pull request the agent makes, repoward posts a commit status named
+`repoward/receipt`:
+
+```text
+policy 4c16a8364c1a; audit seq 12-40; 2 denied; 1 escalated; flow labels: yes
+```
+
+That is the policy's hash, the audit records since this server started, how many calls were denied
+or needed approval, and whether anything restricts the agent's writes. `flow labels` can also say
+`no`, `unknown`, or `off` if the flow guard is off.
+
+- It needs `Commit statuses: write`. A GitHub App uses a separate token holding only that permission
+  for each receipt. A personal token needs the permission on the token itself, so every tool's calls
+  carry it.
+- A receipt is audited before it is posted. If posting fails, the agent's commit or pull request still
+  succeeds, and the failure is logged.
+- **A receipt does not prove a change came through repoward.** Anyone with that permission can post
+  the same status, so don't make it a required check.
+- **Anyone who can see the repository can read it.** On a public repository, that includes how many
+  calls were refused and whether flow labels are set, which can hint that the agent read private
+  content.
 
 ## Trying a policy change
 

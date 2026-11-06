@@ -168,6 +168,14 @@ class GitHubClient:
         except ValueError as exc:
             raise ToolError("GitHub returned a response that could not be read.") from exc
 
+    async def post_commit_status(self, repo: str, sha: str, context: str, description: str) -> None:
+        """Post an informational commit status."""
+        await self.send_json(
+            "POST",
+            f"{repo_path(repo)}/statuses/{sha}",
+            {"state": "success", "context": context, "description": description},
+        )
+
     async def repo_is_private(self, repo: str) -> bool:
         """Whether a repository is private. Raises if GitHub gives no clear answer."""
         with call_scope(repo, {"metadata": "read"}):

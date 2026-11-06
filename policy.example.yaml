@@ -49,6 +49,11 @@ flow_guard:
   trusted_associations: [OWNER, MEMBER, COLLABORATOR]
   single_repo: false
 
+# Post a commit status summarizing the agent's run. Needs Commit statuses: write, and anyone who
+# can see the repository can read it. It does not prove a change came through this server.
+receipts:
+  enabled: false
+
 roles:
   reader:
     tools:

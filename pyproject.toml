@@ -1,6 +1,6 @@
 [project]
 name = "repoward"
-version = "0.2.0"
+version = "0.3.0"
 description = "A GitHub MCP server that stops AI agents leaking private code when a malicious issue tells them to."
 readme = "README.md"
 requires-python = ">=3.11"

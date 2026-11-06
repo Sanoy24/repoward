@@ -40,6 +40,9 @@ another MCP server.
 - A compromised trusted account: `author_association` reflects the account, not its intent.
 - Teams and remote use: there is no HTTP mode or per-user login yet, and all calls share one GitHub
   identity. This server's audit log is then the only per-user record, and today there is one user.
+- Receipts are informational. Anyone with `Commit statuses: write` can post the same status, so one
+  does not prove a change came through this server. On a public repository, anyone can read its
+  counts and whether flow labels are set.
 - Review approval trusts GitHub's `commit_id` and permission answers at the moment of the check.
 - Independent review. Flow guard's untrusted-author rule is tested using real `author_association`
   values from GitHub, with a policy that marks the author's association as untrusted.

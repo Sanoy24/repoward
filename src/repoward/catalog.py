@@ -33,6 +33,9 @@ UNTRUSTED_TEXT_TOOLS = frozenset(
     {"github_list_issues", "github_get_issue", "ci_get_status", "ci_get_job_logs"}
 )
 
+# Receipts get their own token, so no tool's token ever needs this permission.
+RECEIPT_PERMISSIONS = {"statuses": "write"}
+
 _ISSUES_READ = {"issues": "read", "pull_requests": "read"}
 _ISSUES_WRITE = {"issues": "write", "pull_requests": "write"}
 _CONTENTS_READ = {"contents": "read"}

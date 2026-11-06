@@ -28,6 +28,7 @@ from repoward.flow import FlowGuard, FlowStore
 from repoward.pipeline import Pipeline, alert
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal, local_principal
+from repoward.receipts import ReceiptLedger
 from repoward.registry import ToolRegistry
 from repoward.tools import ci_read, github_dangerous, github_read, github_write, system
 
@@ -97,8 +98,18 @@ def run_stdio(
     )
     rules = policy.policy.flow_guard
     flow = FlowGuard(rules, FlowStore(flow_path), github.repo_is_private) if rules.enabled else None
+    receipts = (
+        ReceiptLedger(github.post_commit_status, policy.sha256)
+        if policy.policy.receipts.enabled
+        else None
+    )
     pipeline = Pipeline(
-        policy, registry, AuditLog(audit_path, hmac_key), approvals=approvals, flow=flow
+        policy,
+        registry,
+        AuditLog(audit_path, hmac_key),
+        approvals=approvals,
+        flow=flow,
+        receipts=receipts,
     )
     server = create_server(registry, pipeline, local_principal(policy.policy.stdio.role))
 
