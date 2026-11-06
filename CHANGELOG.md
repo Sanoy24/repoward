@@ -17,6 +17,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - Write tools for branches, commits, draft pull requests and comments.
 - Approval store, `repoward approvals` commands, and dangerous tools for merging pull requests and
   deleting branches.
+- Flow guard: writes are decided by what the agent has read, using repository visibility and author
+  association from GitHub, with `repoward flow` commands for people.
 - Policy rules for the branch prefix, draft-only pull requests and commit limits, and a scan that
   refuses to send recognizable credentials.
 

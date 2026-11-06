@@ -19,8 +19,9 @@ uv run mypy
 uv run pytest
 ```
 
-A live suite runs against a real sandbox repository. It is skipped by default and needs
-`GITHUB_TOKEN` and `REPOWARD_LIVE_REPO`:
+A live suite runs against real sandbox repositories. It is skipped by default and needs
+`GITHUB_TOKEN`, `GITHUB_WRITE_TOKEN`, `REPOWARD_LIVE_REPO` and `REPOWARD_LIVE_PRIVATE_REPO`. It
+merges real commits, so only point it at sandboxes:
 
 ```bash
 uv run pytest -m live

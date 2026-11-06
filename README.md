@@ -2,14 +2,47 @@
 
 A GitHub MCP server that stops AI agents acting on what an attacker's issue told them to do.
 
-> **Status: pre-alpha.** Tools and approvals work. Flow guard is not built yet, so the attack
-> described below is not stopped yet. Do not rely on this project for security.
+> **Status: pre-alpha, not yet released.** Do not rely on this project for security yet.
 
 ## The problem
 
 An agent with GitHub access can read a malicious public issue, read a private repository, and post
 the contents in a public pull request. Each call looks allowed on its own, so per-tool permissions
-do not stop the sequence.
+do not stop the sequence. This is the
+[attack Invariant Labs published](https://invariantlabs.ai/blog/mcp-github-vulnerability) against
+agents using GitHub's MCP server, and repoward's test suite replays it against real repositories.
+
+## Flow guard
+
+Before every write, repoward checks what this agent has already read, using facts from GitHub:
+
+| If the agent has read | Then |
+| --- | --- |
+| Anything from a private repository | Writes to public repositories are denied |
+| An issue, pull request or comment from an author outside `OWNER`, `MEMBER` and `COLLABORATOR`, or a job log | Each write needs human approval |
+
+This does not depend on the model noticing an attack or on scanning text, so rewording or
+encoding the data does not get around it. The state survives restarts, and no tool can clear it.
+A person can:
+
+```bash
+uv run repoward flow --db flow.db status
+uv run repoward flow --db flow.db reset --audit audit.jsonl
+```
+
+What it does not do:
+
+- It only sees this server's tools. A shell, a browser or another MCP server is still a way out, so
+  it protects agents whose GitHub access and outbound routes are limited to this server.
+- Data can stay in an agent's context after the window (60 minutes by default) ends. Restart a
+  long-running agent to clear its context.
+- Reading one private repository and writing to another private repository is allowed, unless you
+  set `single_repo: true`.
+- Repository files and code search results do not count as untrusted input, because they were
+  merged by someone with write access.
+- `author_association` is a coarse signal, and a compromised trusted account counts as trusted.
+- Maintainers of public repositories will see more approval requests. That is the cost of the
+  default, and `trusted_associations` is configurable.
 
 ## What works today
 
@@ -35,8 +68,6 @@ do not stop the sequence.
 
 ## Planned
 
-- **Flow guard:** tracks what the agent has read, using facts from GitHub, then blocks
-  private-to-public writes and requires approval for writes after untrusted input.
 - **Least-privilege tokens:** short-lived GitHub App tokens scoped to each call.
 
 ## Who it is for
@@ -56,7 +87,7 @@ uv sync
 cp policy.example.yaml policy.yaml  # then edit repos.allow
 uv run repoward validate-policy policy.yaml
 GITHUB_TOKEN=... uv run repoward serve --policy policy.yaml --audit audit.jsonl \
-  --approvals approvals.db
+  --approvals approvals.db --flow flow.db
 ```
 
 The server speaks MCP over stdio. Check the log with:
@@ -131,7 +162,8 @@ The log is tamper-evident, not tamper-proof.
 | Delete the newest records | **Not detected** | **Not detected** | Detected back to the last checkpoint |
 
 Set `REPOWARD_AUDIT_HMAC_KEY` to use HMAC, and store the output of `repoward audit checkpoint`
-somewhere the server cannot write. A crash during a write leaves an incomplete last line, and new
+somewhere the server cannot write. Comment bodies, titles, commit messages and file contents are
+logged as a length and hash rather than as text. A crash during a write leaves an incomplete last line, and new
 writes are then refused until an operator repairs the log. Secret redaction is best effort.
 
 ## Contributing and security
