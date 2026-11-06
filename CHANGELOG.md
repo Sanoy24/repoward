@@ -12,3 +12,5 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - Single guarded pipeline for every tool attempt.
 - Hash-chained audit log with HMAC mode, `repoward audit verify` and `repoward audit checkpoint`.
 - Per-principal, per-tool rate limits.
+- Read tools for issues, code search, files, CI status and job logs.
+- Framing, invisible-character removal and redaction for text from GitHub users.

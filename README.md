@@ -2,8 +2,8 @@
 
 A GitHub MCP server that stops AI agents acting on what an attacker's issue told them to do.
 
-> **Status: pre-alpha.** The governance core works, but there are no GitHub tools yet. Do not rely
-> on this project for security.
+> **Status: pre-alpha.** Read-only GitHub tools work. Write tools, approvals and flow guard are not
+> built yet. Do not rely on this project for security.
 
 ## The problem
 
@@ -19,10 +19,16 @@ do not stop the sequence.
   through one pipeline and is logged.
 - **Audit log:** a hash-chained record of every decision, with optional HMAC and checkpoints.
 - **Rate limits:** per principal and per tool.
+- **Read tools:** `github_list_issues`, `github_get_issue`, `github_search_code`, `github_get_file`,
+  `ci_get_status` and `ci_get_job_logs`.
+- **Untrusted content handling:** text from GitHub users comes back wrapped in a tag with a random
+  id per response, after invisible characters, hidden HTML comments and images are removed and
+  secrets are redacted. This is a mitigation, not a guarantee: a model can still be fooled, which
+  is why the rules above are enforced outside the model.
 
 ## Planned
 
-- **GitHub tools:** issues, files, code search, CI status, branches, commits and draft pull requests.
+- **Write tools:** branches, commits, comments and draft pull requests.
 - **Flow guard:** tracks what the agent has read, using facts from GitHub, then blocks
   private-to-public writes and requires approval for writes after untrusted input.
 - **Approvals:** risky actions wait for a human, tied to the exact commit.
@@ -42,16 +48,41 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 git clone https://github.com/Sanoy24/repoward.git
 cd repoward
 uv sync
-cp policy.example.yaml policy.yaml
+cp policy.example.yaml policy.yaml  # then edit repos.allow
 uv run repoward validate-policy policy.yaml
-uv run repoward serve --policy policy.yaml --audit audit.jsonl
+GITHUB_TOKEN=... uv run repoward serve --policy policy.yaml --audit audit.jsonl
 ```
 
-The server speaks MCP over stdio and has one tool so far, `ping`. Check the log with:
+The server speaks MCP over stdio. Check the log with:
 
 ```bash
 uv run repoward audit verify audit.jsonl
 ```
+
+## GitHub token
+
+Use a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
+limited to the repositories you allow, with short expiry. Choose **Only select repositories** so
+that repository permissions appear. The read tools need these, all read-only:
+
+| Permission | Used for |
+| --- | --- |
+| Metadata | Required by GitHub |
+| Contents | `github_get_file` |
+| Issues | `github_list_issues`, `github_get_issue` |
+| Pull requests | Pull requests in those same tools |
+| Actions | `ci_get_status`, `ci_get_job_logs` |
+| Commit statuses | `ci_get_status` |
+
+Limits to know about:
+
+- `ci_get_status` does not show third-party checks reported only through the Checks API, which
+  GitHub documents as unavailable to fine-grained tokens.
+- `github_search_code` covers the default branch and files under 384 KB. New repositories can
+  return nothing until GitHub indexes them.
+- `github_get_file` refuses symlinks, submodules, binary files and files over 1 MB, and fails
+  in directories GitHub lists only partly.
+- `ci_get_job_logs` fails closed if GitHub moves log storage to a host it does not recognize.
 
 ## What the audit log proves
 
