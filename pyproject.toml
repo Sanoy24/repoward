@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "anyio>=4.9",
     "filelock>=3.20,<5",
+    "httpx>=0.28,<0.29",
     "mcp>=2.3,<3",
     "pathspec>=1,<2",
     "pydantic>=2.12,<3",
@@ -35,6 +36,7 @@ repoward = "repoward.cli:main"
 dev = [
     "mypy>=2.4",
     "pytest>=9.2",
+    "respx>=0.23",
     "ruff>=0.17",
     "types-pyyaml>=6.0.12.20261103",
 ]
@@ -48,7 +50,8 @@ packages = ["src/repoward"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --strict-config"
+addopts = "-ra --strict-markers --strict-config -m 'not live'"
+markers = ["live: needs a real token and sandbox repo (GITHUB_TOKEN, REPOWARD_LIVE_REPO)"]
 xfail_strict = true
 
 [tool.ruff]
