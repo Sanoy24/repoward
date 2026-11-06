@@ -91,17 +91,15 @@ def _serve(args: argparse.Namespace) -> int:
     except AuditKeyError as exc:
         _error(str(exc))
         return 1
+    audit = args.audit or directory / AUDIT_FILE
+    approvals = args.approvals or directory / APPROVALS_FILE
+    flow = args.flow or directory / FLOW_FILE
     try:
-        directory.mkdir(parents=True, exist_ok=True)
-        run_stdio(
-            compiled,
-            args.audit or directory / AUDIT_FILE,
-            args.approvals or directory / APPROVALS_FILE,
-            args.flow or directory / FLOW_FILE,
-            key,
-        )
+        for path in (audit, approvals, flow):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        run_stdio(compiled, audit, approvals, flow, key)
     except OSError as exc:
-        _error(f"cannot use {directory}: {exc.strerror}")
+        _error(f"cannot create repoward's files: {exc.strerror}")
         return 1
     except (ApprovalStoreError, FlowStoreError) as exc:
         _error(str(exc))

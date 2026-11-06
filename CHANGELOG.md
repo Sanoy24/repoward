@@ -5,6 +5,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-06
+
+### Fixed
+
+- `repoward serve` no longer creates `~/.repoward` when every path is given explicitly.
+- The README now says to run `repoward init` first, and what to do if a client cannot connect.
+- Releases are no longer marked as pre-releases, so they show on the repository page.
+
 ## [0.1.0] - 2026-11-06
 
 ### Added

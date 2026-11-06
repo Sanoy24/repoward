@@ -127,6 +127,35 @@ def test_commands_default_to_the_home_directory(
 
 
 @pytest.mark.anyio
+async def test_serve_with_explicit_paths_leaves_the_default_directory_alone(
+    policy_file: Path, tmp_path: Path
+) -> None:
+    unused = tmp_path / "unused-home"
+    state = tmp_path / "state"
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=[
+            "-m",
+            "repoward.cli",
+            "serve",
+            "--policy",
+            str(policy_file),
+            "--audit",
+            str(state / "audit.jsonl"),
+            "--approvals",
+            str(state / "approvals.db"),
+            "--flow",
+            str(state / "flow.db"),
+        ],
+        env={"REPOWARD_HOME": str(unused)},
+    )
+    async with Client(params) as client:
+        await client.call_tool("ping", {})
+    assert not unused.exists()
+    assert verify_log(state / "audit.jsonl").ok
+
+
+@pytest.mark.anyio
 async def test_init_then_serve_works_in_a_real_process(home: Path) -> None:
     assert init() == 0
     params = StdioServerParameters(
