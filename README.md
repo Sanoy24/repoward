@@ -60,7 +60,7 @@ The log is tamper-evident, not tamper-proof.
 | Attack | Plain chain | With an HMAC key the attacker cannot read | With off-host checkpoints |
 | --- | --- | --- | --- |
 | Edit one record | Detected | Detected | Detected |
-| Edit a record and recompute all later hashes | **Not detected** | Detected | Detected |
+| Edit a record and recompute all later hashes | **Not detected** | Detected | Detected back to the last checkpoint |
 | Delete the newest records | **Not detected** | **Not detected** | Detected back to the last checkpoint |
 
 Set `REPOWARD_AUDIT_HMAC_KEY` to use HMAC, and store the output of `repoward audit checkpoint`
