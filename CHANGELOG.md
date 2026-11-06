@@ -5,6 +5,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-06
+
 ### Added
 
 - `repoward policy replay` reports which recorded decisions a policy would change, and says `unknown`
