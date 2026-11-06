@@ -12,6 +12,7 @@ from pydantic import Field
 from repoward.adapters.ci import fetch_job_log_tail
 from repoward.adapters.github import GitHubClient, file_url_path, repo_path
 from repoward.catalog import RiskClass
+from repoward.flow import Taint
 from repoward.policy.engine import Target
 from repoward.registry import ToolError, ToolInput, ToolOutput, ToolRegistry, ToolSpec
 from repoward.sanitize import ContentKind, UntrustedContent
@@ -58,6 +59,7 @@ def register(registry: ToolRegistry, client: GitHubClient) -> None:
             "Third-party checks reported only through the Checks API are not shown.",
         ]
         names: list[str] = []
+        taints: list[Taint] = []
         for index, run in enumerate(runs.get("workflow_runs", [])):
             run_id = int(run["id"])
             lines.append(
@@ -65,6 +67,10 @@ def register(registry: ToolRegistry, client: GitHubClient) -> None:
                 f"conclusion={_enum(run.get('conclusion'))}"
             )
             names.append(f"Run {run_id}: {run.get('name')} on {run.get('head_branch')}")
+            head_repo = (run.get("head_repository") or {}).get("full_name")
+            if isinstance(head_repo, str) and head_repo.casefold() != args.repo.casefold():
+                # A run from a fork carries names chosen by whoever opened the pull request.
+                taints.append(Taint(f"github-ci-run:{args.repo}/{run_id}"))
             if index >= _MAX_RUNS_WITH_JOBS:
                 continue
             jobs = await client.get_json(f"{base}/actions/runs/{run_id}/jobs")
@@ -79,7 +85,7 @@ def register(registry: ToolRegistry, client: GitHubClient) -> None:
             lines.append(f"Status state={_enum(entry.get('state'))}")
             names.append(f"Status: {entry.get('context')}: {entry.get('description')}")
         untrusted = (UntrustedContent(f"github-ci:{args.repo}", "\n".join(names)),) if names else ()
-        return ToolOutput("\n".join(lines), untrusted)
+        return ToolOutput("\n".join(lines), untrusted, tuple(taints))
 
     async def job_logs(args: ToolInput) -> ToolOutput:
         assert isinstance(args, JobLogsInput)  # noqa: S101
@@ -90,6 +96,7 @@ def register(registry: ToolRegistry, client: GitHubClient) -> None:
         return ToolOutput(
             f"Job {args.job_id}. {note}",
             (UntrustedContent(f"github-job-log:{args.repo}/{args.job_id}", tail, ContentKind.LOG),),
+            (Taint(f"github-job-log:{args.repo}/{args.job_id}"),),
         )
 
     registry.register(

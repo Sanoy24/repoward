@@ -122,6 +122,8 @@ async def test_real_stdio_process_is_governed(policy_file: Path, audit_path: Pat
             str(audit_path),
             "--approvals",
             str(audit_path.parent / "approvals.db"),
+            "--flow",
+            str(audit_path.parent / "flow.db"),
         ],
     )
     async with Client(params) as client:

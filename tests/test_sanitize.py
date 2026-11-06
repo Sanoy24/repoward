@@ -69,6 +69,22 @@ def test_audit_redaction_handles_sensitive_keys_and_nesting() -> None:
     assert (result["n"], result["ok"], result["x"]) == (1, True, None)
 
 
+def test_audit_can_replace_content_with_a_fingerprint() -> None:
+    value = {
+        "repo": "org/repo",
+        "title": "A private title",
+        "body": "Private text",
+        "message": "Private message",
+        "files": [{"path": "a.txt", "content": "Private file"}],
+    }
+    result = redact_for_audit(value, hide_content=True)
+    assert result["repo"] == "org/repo"
+    assert result["files"][0]["path"] == "a.txt"
+    assert "Private" not in str(result)
+    assert "12 characters, sha256" in result["files"][0]["content"]
+    assert "Private text" in str(redact_for_audit(value))
+
+
 def test_audit_redaction_is_bounded() -> None:
     deep: object = "x"
     for _ in range(20):

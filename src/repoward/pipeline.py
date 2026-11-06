@@ -14,7 +14,8 @@ from repoward.approvals.store import ApprovalStore, ApprovalStoreError, TooManyP
 from repoward.audit import AuditLog, AuditWriteError
 from repoward.canonical import canonical_json, sha256_hex
 from repoward.catalog import RiskClass
-from repoward.policy.engine import Effect, decide
+from repoward.flow import FlowGuard, FlowStoreError
+from repoward.policy.engine import Decision, Effect, decide
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal
 from repoward.ratelimit import RateLimiter
@@ -58,6 +59,7 @@ class Pipeline:
         audit: AuditLog,
         limiter: RateLimiter | None = None,
         approvals: ApprovalStore | None = None,
+        flow: FlowGuard | None = None,
     ) -> None:
         self._policy = policy
         self._registry = registry
@@ -65,6 +67,7 @@ class Pipeline:
         self._limiter = limiter or RateLimiter(policy.rate_limits)
         self._instance_id = str(uuid.uuid4())
         self._approvals = approvals
+        self._flow = flow
         self._degraded = False
 
     async def call(
@@ -100,12 +103,19 @@ class Pipeline:
         if decision.effect is Effect.DENY:
             return await self._refuse(context, normalized, decision.rule_id, decision.message)
 
+        mutating = spec.risk is not RiskClass.READ
+        repo = spec.target(validated).repo
+        if mutating and self._flow is not None:
+            flow_decision = await self._flow.check_write(principal.id, repo)
+            decision = self._combine(decision, flow_decision)
+            if decision.effect is Effect.DENY:
+                return await self._refuse(context, normalized, decision.rule_id, decision.message)
+
         hit = self._limiter.check(principal.id, tool)
         if hit is not None:
             message = f"Rate limit reached. Try again in {hit.retry_after_seconds} seconds."
             return await self._refuse(context, normalized, hit.rule_id, message)
 
-        mutating = spec.risk is not RiskClass.READ
         if mutating and self._degraded:
             return await self._refuse(
                 context,
@@ -116,7 +126,6 @@ class Pipeline:
 
         rule_id = decision.rule_id
         if decision.effect is Effect.APPROVAL_REQUIRED:
-            repo = spec.target(validated).repo
             args_hash = _hash_args(normalized)
             try:
                 approval_id = await self._consume_approval(principal, tool, repo, args_hash)
@@ -149,7 +158,18 @@ class Pipeline:
         error: str | None = None
         try:
             output = await spec.handler(validated)
+            if not mutating and self._flow is not None:
+                # Saved before the content is returned: unrecorded content is never handed over.
+                for kind, source in await self._flow.record_read(principal.id, repo, output.taints):
+                    await self._record_label(context, kind, source)
             result = _result(render_output(output.text, output.untrusted, MAX_OUTPUT_CHARS))
+        except FlowStoreError as exc:
+            status = "error"
+            error = type(exc).__name__
+            alert(f"flow guard could not save state: {exc}")
+            result = _result(
+                "The content was withheld because it could not be tracked.", is_error=True
+            )
         except ToolError as exc:
             status = "error"
             error = redact_text(str(exc))
@@ -179,6 +199,29 @@ class Pipeline:
                 result.content.append(TextContent(type="text", text=warning))
         return result
 
+    @staticmethod
+    def _combine(decision: Decision, flow: Decision | None) -> Decision:
+        """Apply the flow guard, which can only tighten what policy decided."""
+        if flow is None or flow.effect is Effect.ALLOW or decision.effect is Effect.DENY:
+            return decision
+        if flow.effect is Effect.APPROVAL_REQUIRED and decision.effect is Effect.APPROVAL_REQUIRED:
+            return decision
+        return flow
+
+    async def _record_label(self, context: dict[str, Any], kind: str, source: str) -> None:
+        try:
+            await self._write(
+                {
+                    "event": "flow_label",
+                    "request_id": context["request_id"],
+                    "principal": context["principal"],
+                    "kind": kind,
+                    "source": source,
+                }
+            )
+        except AuditWriteError as exc:
+            alert(f"audit flow label record failed: {exc}")
+
     async def _consume_approval(
         self, principal: Principal, tool: str, repo: str | None, args_hash: str
     ) -> str | None:
@@ -207,6 +250,13 @@ class Pipeline:
             except Exception as exc:
                 details = "Could not fetch details from GitHub."
                 alert(f"approval context failed: {type(exc).__name__}")
+        if self._flow is not None:
+            try:
+                note = await self._flow.describe(principal.id)
+            except FlowStoreError as exc:
+                note = "Flow guard state is unavailable."
+                alert(str(exc))
+            details = "\n".join(part for part in (details, note) if part)
         try:
             approval = await anyio.to_thread.run_sync(
                 self._approvals.request,
@@ -258,7 +308,7 @@ class Pipeline:
         return {
             **context,
             "event": "tool_call_decision",
-            "args_redacted": redact_for_audit(args),
+            "args_redacted": redact_for_audit(args, hide_content=True),
             "args_hash": _hash_args(args),
             "decision": effect.value,
             "rule_id": rule_id,

@@ -9,6 +9,7 @@ from pydantic import AfterValidator, Field
 
 from repoward.adapters.github import TEXT_MATCH_ACCEPT, GitHubClient, file_url_path, repo_path
 from repoward.catalog import RiskClass
+from repoward.flow import Taint
 from repoward.policy.engine import Target
 from repoward.policy.loader import CompiledPolicy
 from repoward.registry import ToolError, ToolInput, ToolOutput, ToolRegistry, ToolSpec
@@ -117,7 +118,11 @@ def register(registry: ToolRegistry, client: GitHubClient, policy: CompiledPolic
         untrusted = (
             (UntrustedContent(f"github-issues:{args.repo}", "\n".join(titles)),) if titles else ()
         )
-        return ToolOutput("\n".join(lines), untrusted)
+        taints = tuple(
+            Taint(f"github-issue:{args.repo}#{int(item['number'])}", item.get("author_association"))
+            for item in items
+        )
+        return ToolOutput("\n".join(lines), untrusted, taints)
 
     async def get_issue(args: ToolInput) -> ToolOutput:
         assert isinstance(args, GetIssueInput)  # noqa: S101
@@ -156,7 +161,15 @@ def register(registry: ToolRegistry, client: GitHubClient, policy: CompiledPolic
                     ContentKind.MARKUP,
                 )
             )
-        return ToolOutput("\n".join(lines), tuple(parts))
+        taints = [Taint(source, issue.get("author_association"))]
+        taints += [
+            Taint(
+                f"github-comment:{args.repo}#{args.number}/{int(comment['id'])}",
+                comment.get("author_association"),
+            )
+            for comment in comments
+        ]
+        return ToolOutput("\n".join(lines), tuple(parts), tuple(taints))
 
     async def search_code(args: ToolInput) -> ToolOutput:
         assert isinstance(args, SearchCodeInput)  # noqa: S101

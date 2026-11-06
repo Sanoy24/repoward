@@ -1,5 +1,6 @@
 """Secret redaction and size limits. Best effort: patterns cannot catch every secret."""
 
+import hashlib
 import re
 import secrets
 from collections.abc import Sequence
@@ -11,6 +12,7 @@ REDACTED = "[REDACTED]"
 _MAX_AUDIT_STRING = 512
 _MAX_ITEMS = 50
 _MAX_DEPTH = 6
+_CONTENT_FIELDS = {"body", "content", "message", "title"}
 _SENSITIVE_KEY = re.compile(r"authorization|password|passwd|secret|token|api_?key", re.I)
 
 _REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -61,8 +63,17 @@ def truncate_text(text: str, limit: int) -> str:
     return f"{text[:limit]}\n[truncated {len(text) - limit} characters]"
 
 
-def redact_for_audit(value: Any, depth: int = 0) -> Any:
-    """Return a bounded, redacted copy of a JSON-like value."""
+def _fingerprint(text: str) -> str:
+    digest = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+    return f"[{len(text)} characters, sha256 {digest}]"
+
+
+def redact_for_audit(value: Any, depth: int = 0, hide_content: bool = False) -> Any:
+    """Return a bounded, redacted copy of a JSON-like value.
+
+    With hide_content, free text such as comment bodies and file contents becomes a length and
+    hash. Audit logs are often shipped elsewhere, so they must not collect repository content.
+    """
     if depth >= _MAX_DEPTH:
         return "[TRUNCATED]"
     if isinstance(value, str):
@@ -74,10 +85,17 @@ def redact_for_audit(value: Any, depth: int = 0) -> Any:
         for key, item in list(value.items())[:_MAX_ITEMS]:
             safe_key = truncate_text(redact_text(str(key)), _MAX_AUDIT_STRING)
             sensitive = _SENSITIVE_KEY.search(safe_key) is not None
-            result[safe_key] = REDACTED if sensitive else redact_for_audit(item, depth + 1)
+            if sensitive:
+                result[safe_key] = REDACTED
+            elif hide_content and safe_key in _CONTENT_FIELDS and isinstance(item, str):
+                result[safe_key] = _fingerprint(item)
+            else:
+                result[safe_key] = redact_for_audit(item, depth + 1, hide_content)
         return result
     if isinstance(value, list | tuple):
-        return [redact_for_audit(item, depth + 1) for item in list(value)[:_MAX_ITEMS]]
+        return [
+            redact_for_audit(item, depth + 1, hide_content) for item in list(value)[:_MAX_ITEMS]
+        ]
     return f"[{type(value).__name__}]"
 
 
