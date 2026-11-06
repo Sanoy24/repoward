@@ -25,6 +25,8 @@ API = "https://api.github.com"
 REPO = "org/sandbox"
 TOKEN = "ghp_" + "t" * 36  # a fake value, for checking where it gets sent
 SHA = "a" * 40
+TREE_SHA = "e" * 40
+SUBTREE_SHA = "f" * 40
 LOG_URL = "https://productionresultssa32.blob.core.windows.net/logs/1?sig=abc"
 READER = Principal("alice", "reader")
 
@@ -190,48 +192,97 @@ async def test_hidden_instructions_in_an_issue_are_removed(
 # Files
 
 
-def listing(*entries: dict[str, Any]) -> list[dict[str, Any]]:
-    return list(entries)
+def tree(*entries: dict[str, Any], truncated: bool = False) -> dict[str, Any]:
+    return {"sha": TREE_SHA, "tree": list(entries), "truncated": truncated}
+
+
+def blob_entry(name: str, mode: str = "100644", size: int = 5, sha: str = SHA) -> dict[str, Any]:
+    return {"path": name, "mode": mode, "type": "blob", "sha": sha, "size": size}
+
+
+def tree_entry(name: str, sha: str = SUBTREE_SHA) -> dict[str, Any]:
+    return {"path": name, "mode": "040000", "type": "tree", "sha": sha}
 
 
 def blob(content: bytes) -> dict[str, Any]:
     return {"encoding": "base64", "content": base64.b64encode(content).decode()}
 
 
-async def test_get_file_lists_the_parent_then_reads_the_blob_by_sha(
+async def test_get_file_walks_the_tree_then_reads_the_blob_by_sha(
     pipeline: Pipeline, github: respx.MockRouter
 ) -> None:
-    parent = github.get(f"{API}/repos/{REPO}/contents/src").respond(
-        json=listing({"name": "app.py", "type": "file", "sha": SHA, "size": 5})
+    root = github.get(f"{API}/repos/{REPO}/git/trees/agent/x").respond(json=tree(tree_entry("src")))
+    github.get(f"{API}/repos/{REPO}/git/trees/{SUBTREE_SHA}").respond(
+        json=tree(blob_entry("app.py"))
     )
     github.get(f"{API}/repos/{REPO}/git/blobs/{SHA}").respond(json=blob(b"print"))
-    result = await call(pipeline, "github_get_file", repo=REPO, path="src/app.py", ref="main")
+    result = await call(pipeline, "github_get_file", repo=REPO, path="src/app.py", ref="agent/x")
     assert not result.is_error
-    assert parent.calls.last.request.url.params["ref"] == "main"
+    assert root.called
     assert 'source="github-file:org/sandbox/src/app.py"' in text(result)
     assert "print" in text(result)
 
 
-async def test_get_file_at_the_root(pipeline: Pipeline, github: respx.MockRouter) -> None:
-    github.get(f"{API}/repos/{REPO}/contents").respond(
-        json=listing({"name": "README.md", "type": "file", "sha": SHA, "size": 2})
-    )
+async def test_get_file_uses_the_default_branch_when_no_ref_is_given(
+    pipeline: Pipeline, github: respx.MockRouter
+) -> None:
+    github.get(f"{API}/repos/{REPO}").respond(json={"default_branch": "trunk"})
+    github.get(f"{API}/repos/{REPO}/git/trees/trunk").respond(json=tree(blob_entry("README.md")))
     github.get(f"{API}/repos/{REPO}/git/blobs/{SHA}").respond(json=blob(b"hi"))
     assert not (await call(pipeline, "github_get_file", repo=REPO, path="README.md")).is_error
 
 
-@pytest.mark.parametrize("kind", ["symlink", "submodule", "dir"])
-async def test_links_to_denied_files_are_refused(
-    pipeline: Pipeline, github: respx.MockRouter, kind: str
+async def test_executable_files_are_regular_files(
+    pipeline: Pipeline, github: respx.MockRouter
 ) -> None:
-    github.get(f"{API}/repos/{REPO}/contents/docs").respond(
-        json=listing({"name": "a.txt", "type": kind, "sha": SHA, "size": 1})
+    github.get(f"{API}/repos/{REPO}/git/trees/main").respond(
+        json=tree(blob_entry("run.sh", mode="100755"))
     )
+    github.get(f"{API}/repos/{REPO}/git/blobs/{SHA}").respond(json=blob(b"#!/bin/sh"))
+    result = await call(pipeline, "github_get_file", repo=REPO, path="run.sh", ref="main")
+    assert not result.is_error
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        blob_entry("a.txt", mode="120000"),  # a symlink, which is typed as a blob in a tree
+        {"path": "a.txt", "mode": "160000", "type": "commit", "sha": SHA},
+        tree_entry("a.txt"),
+    ],
+)
+async def test_anything_but_a_regular_file_is_refused(
+    pipeline: Pipeline, github: respx.MockRouter, entry: dict[str, Any]
+) -> None:
+    github.get(f"{API}/repos/{REPO}/git/trees/main").respond(json=tree(entry))
     blob_route = github.get(f"{API}/repos/{REPO}/git/blobs/{SHA}").respond(json=blob(b"SECRET"))
-    result = await call(pipeline, "github_get_file", repo=REPO, path="docs/a.txt")
+    result = await call(pipeline, "github_get_file", repo=REPO, path="a.txt", ref="main")
     assert result.is_error
     assert "not a regular file" in text(result)
     assert not blob_route.called
+
+
+async def test_a_symlinked_folder_on_the_way_is_refused(
+    pipeline: Pipeline, github: respx.MockRouter
+) -> None:
+    github.get(f"{API}/repos/{REPO}/git/trees/main").respond(
+        json=tree(blob_entry("alias", mode="120000"))
+    )
+    result = await call(pipeline, "github_get_file", repo=REPO, path="alias/key.txt", ref="main")
+    assert result.is_error
+    assert "not a regular file" in text(result)
+    assert len(github.calls) == 1
+
+
+async def test_the_contents_api_is_never_used_for_files(
+    pipeline: Pipeline, github: respx.MockRouter
+) -> None:
+    """It follows symlinks to normal files and reports them as files, so it cannot be trusted."""
+    contents = github.get(url__regex=r".*/contents.*").respond(json={})
+    github.get(f"{API}/repos/{REPO}/git/trees/main").respond(json=tree(blob_entry("a.txt")))
+    github.get(f"{API}/repos/{REPO}/git/blobs/{SHA}").respond(json=blob(b"x"))
+    await call(pipeline, "github_get_file", repo=REPO, path="a.txt", ref="main")
+    assert not contents.called
 
 
 async def test_denied_path_never_reaches_github(
@@ -243,44 +294,38 @@ async def test_denied_path_never_reaches_github(
 
 
 @pytest.mark.parametrize(
-    ("entries", "message"),
+    ("document", "message"),
     [
-        (listing(), "not found"),
-        (listing({"name": "a.txt", "type": "file", "sha": "nothex", "size": 1}), "unexpected"),
-        (listing({"name": "a.txt", "type": "file", "sha": SHA, "size": 2_000_000}), "limit"),
+        (tree(), "not found"),
+        (tree(blob_entry("a.txt", sha="nothex")), "unexpected"),
+        (tree(blob_entry("a.txt", size=2_000_000)), "limit"),
+        (tree(truncated=True), "too large"),
+        ({"not": "a tree"}, "unexpected"),
     ],
 )
 async def test_get_file_failures(
-    pipeline: Pipeline, github: respx.MockRouter, entries: list[dict[str, Any]], message: str
+    pipeline: Pipeline, github: respx.MockRouter, document: dict[str, Any], message: str
 ) -> None:
-    github.get(f"{API}/repos/{REPO}/contents/docs").respond(json=entries)
-    result = await call(pipeline, "github_get_file", repo=REPO, path="docs/a.txt")
+    github.get(f"{API}/repos/{REPO}/git/trees/main").respond(json=document)
+    result = await call(pipeline, "github_get_file", repo=REPO, path="a.txt", ref="main")
     assert result.is_error
     assert message in text(result)
 
 
 async def test_binary_files_are_refused(pipeline: Pipeline, github: respx.MockRouter) -> None:
-    github.get(f"{API}/repos/{REPO}/contents").respond(
-        json=listing({"name": "a.bin", "type": "file", "sha": SHA, "size": 2})
-    )
+    github.get(f"{API}/repos/{REPO}/git/trees/main").respond(json=tree(blob_entry("a.bin")))
     github.get(f"{API}/repos/{REPO}/git/blobs/{SHA}").respond(json=blob(b"\xff\xfe"))
-    result = await call(pipeline, "github_get_file", repo=REPO, path="a.bin")
+    result = await call(pipeline, "github_get_file", repo=REPO, path="a.bin", ref="main")
     assert result.is_error
     assert "binary" in text(result)
 
 
-async def test_parent_that_is_a_file_is_refused(
+async def test_ref_with_a_slash_keeps_its_path_form(
     pipeline: Pipeline, github: respx.MockRouter
 ) -> None:
-    github.get(f"{API}/repos/{REPO}/contents/docs").respond(json={"type": "file"})
-    result = await call(pipeline, "github_get_file", repo=REPO, path="docs/a.txt")
-    assert result.is_error
-
-
-async def test_path_segments_are_encoded(pipeline: Pipeline, github: respx.MockRouter) -> None:
-    route = github.get(url__regex=r".*/contents/.*").respond(json=[])
-    await call(pipeline, "github_get_file", repo=REPO, path="a b/c#d?/e.txt")
-    assert "/contents/a%20b/c%23d%3F" in str(route.calls.last.request.url)
+    route = github.get(url__regex=r".*/git/trees/.*").respond(json=tree())
+    await call(pipeline, "github_get_file", repo=REPO, path="a.txt", ref="agent/x")
+    assert str(route.calls.last.request.url).endswith("/git/trees/agent/x")
 
 
 # Search

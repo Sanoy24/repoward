@@ -16,6 +16,8 @@ from repoward.sanitize import ContentKind, UntrustedContent
 from repoward.validation import GitRef, RepoName, RepoPath, normalize_path
 
 MAX_FILE_BYTES = 1_000_000
+_REGULAR_FILE_MODES = {"100644", "100755"}
+_TREE_MODE = "040000"
 _MAX_COMMENTS = 30
 _SHA = re.compile(r"[0-9a-f]{40}")
 _LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
@@ -187,30 +189,52 @@ def register(registry: ToolRegistry, client: GitHubClient, policy: CompiledPolic
         )
         return ToolOutput("\n".join(lines), untrusted)
 
-    async def get_file(args: ToolInput) -> ToolOutput:
-        """List the parent folder, then fetch the blob by SHA.
+    async def find_regular_file(args: GetFileInput) -> tuple[str, int]:
+        """Walk the Git tree one folder at a time, returning the file's blob SHA and size.
 
-        The contents endpoint follows symlinks to normal files, so asking it for a file directly
-        could return the content of a denied path. A blob fetched by SHA follows nothing.
+        The tree is the only source that shows real modes. For a symlink to a normal file, the
+        contents API returns the target's text and reports type "file", in folder listings too,
+        so it would hand over denied files through a link at an allowed path.
         """
+        base = repo_path(args.repo)
+        tree_id = args.ref
+        if tree_id is None:
+            repository = await client.get_json(base)
+            tree_id = (
+                str(repository.get("default_branch", "")) if isinstance(repository, dict) else ""
+            )
+            if not tree_id:
+                raise ToolError("GitHub returned an unexpected response.")
+        segments = args.path.split("/")
+        for index, segment in enumerate(segments):
+            tree = await client.get_json(f"{base}/git/trees/{file_url_path(tree_id)}")
+            if not isinstance(tree, dict) or not isinstance(tree.get("tree"), list):
+                raise ToolError("GitHub returned an unexpected response.")
+            if tree.get("truncated"):
+                raise ToolError("That directory is too large to read safely.")
+            entry = next((item for item in tree["tree"] if item.get("path") == segment), None)
+            if entry is None:
+                raise ToolError("File not found.")
+            sha = str(entry.get("sha", ""))
+            mode = entry.get("mode")
+            if index < len(segments) - 1:
+                if mode != _TREE_MODE:
+                    raise ToolError("That path is not a regular file.")
+                if not _SHA.fullmatch(sha):
+                    raise ToolError("GitHub returned an unexpected response.")
+                tree_id = sha
+                continue
+            if mode not in _REGULAR_FILE_MODES:
+                raise ToolError("That path is not a regular file.")
+            if not _SHA.fullmatch(sha):
+                raise ToolError("GitHub returned an unexpected response.")
+            return sha, int(entry.get("size", 0))
+        raise ToolError("File not found.")
+
+    async def get_file(args: ToolInput) -> ToolOutput:
         assert isinstance(args, GetFileInput)  # noqa: S101
-        parent, _, name = args.path.rpartition("/")
-        listing_path = f"{repo_path(args.repo)}/contents"
-        if parent:
-            listing_path += f"/{file_url_path(parent)}"
-        params = {"ref": args.ref} if args.ref else None
-        entries = await client.get_json(listing_path, params)
-        if not isinstance(entries, list):
-            raise ToolError("The parent path is not a directory.")
-        entry = next((item for item in entries if item.get("name") == name), None)
-        if entry is None:
-            raise ToolError("File not found in that directory.")
-        if entry.get("type") != "file":
-            raise ToolError("That path is not a regular file.")
-        sha = str(entry.get("sha", ""))
-        if not _SHA.fullmatch(sha):
-            raise ToolError("GitHub returned an unexpected response.")
-        if int(entry.get("size", 0)) > MAX_FILE_BYTES:
+        sha, size = await find_regular_file(args)
+        if size > MAX_FILE_BYTES:
             raise ToolError(f"The file is larger than the {MAX_FILE_BYTES} byte limit.")
         blob = await client.get_json(f"{repo_path(args.repo)}/git/blobs/{sha}")
         if not isinstance(blob, dict) or blob.get("encoding") != "base64":
