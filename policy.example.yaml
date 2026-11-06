@@ -28,6 +28,11 @@ dangerous_tools:
   github_merge_pull_request: { enabled: false }
   github_delete_branch: { enabled: true }
 
+# How long a request or an approval stays valid.
+approvals:
+  ttl_minutes: 15
+  max_pending_per_principal: 20
+
 roles:
   reader:
     tools:

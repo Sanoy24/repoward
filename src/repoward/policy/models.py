@@ -36,6 +36,11 @@ class CommitLimits(_Strict):
     max_bytes: int = Field(default=200_000, gt=0)
 
 
+class ApprovalRules(_Strict):
+    ttl_minutes: int = Field(default=15, gt=0, le=1440)
+    max_pending_per_principal: int = Field(default=20, gt=0)
+
+
 class DangerousTool(_Strict):
     enabled: bool
 
@@ -63,6 +68,7 @@ class Policy(_Strict):
     branches: BranchRules = Field(default_factory=BranchRules)
     pull_requests: PullRequestRules = Field(default_factory=PullRequestRules)
     dangerous_tools: dict[str, DangerousTool] = Field(default_factory=dict)
+    approvals: ApprovalRules = Field(default_factory=ApprovalRules)
     roles: dict[str, Role]
     rate_limits: dict[str, RateLimit]
     stdio: StdioConfig = Field(default_factory=StdioConfig)
