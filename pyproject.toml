@@ -1,7 +1,7 @@
 [project]
 name = "repoward"
-version = "0.1.0.dev0"
-description = "A GitHub MCP server that stops AI agents acting on what an attacker's issue told them to do."
+version = "0.1.0"
+description = "A GitHub MCP server that stops AI agents leaking private code when a malicious issue tells them to."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "sanoy" }]
 keywords = ["mcp", "model-context-protocol", "ai-agents", "security", "prompt-injection", "github"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -29,6 +29,11 @@ dependencies = [
     "pyyaml>=6",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Sanoy24/repoward"
+Issues = "https://github.com/Sanoy24/repoward/issues"
+Changelog = "https://github.com/Sanoy24/repoward/blob/main/CHANGELOG.md"
+
 [project.scripts]
 repoward = "repoward.cli:main"
 
@@ -47,6 +52,19 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/repoward"]
+
+# An explicit list, so local working files can never end up in a release.
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "policy.example.yaml",
+    "docs/THREAT_MODEL.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -68,4 +86,4 @@ select = ["E", "F", "W", "I", "UP", "B", "S", "C4", "SIM", "RUF"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]

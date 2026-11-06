@@ -1,0 +1,38 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Sanoy24/repoward",
+  "title": "repoward",
+  "description": "GitHub MCP server that blocks private-to-public leaks by agents, with approvals and audit.",
+  "repository": {
+    "url": "https://github.com/Sanoy24/repoward",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "repoward",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "serve",
+          "isRequired": true
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "GITHUB_TOKEN",
+          "description": "Fine-grained personal access token limited to the repositories in your policy.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
