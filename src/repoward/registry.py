@@ -7,6 +7,7 @@ from mcp.types import Tool
 from pydantic import BaseModel, ConfigDict
 
 from repoward.catalog import TOOL_CATALOG, RiskClass
+from repoward.flow import Taint
 from repoward.policy.engine import Target
 from repoward.sanitize import UntrustedContent
 
@@ -23,6 +24,7 @@ class ToolOutput:
 
     text: str
     untrusted: tuple[UntrustedContent, ...] = ()
+    taints: tuple[Taint, ...] = ()
 
 
 class ToolError(Exception):

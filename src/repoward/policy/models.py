@@ -10,6 +10,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from repoward.validation import RepoName
 
+AuthorAssociation = Literal[
+    "OWNER",
+    "MEMBER",
+    "COLLABORATOR",
+    "CONTRIBUTOR",
+    "FIRST_TIME_CONTRIBUTOR",
+    "FIRST_TIMER",
+    "MANNEQUIN",
+    "NONE",
+]
+
+
+_DEFAULT_TRUSTED: tuple[AuthorAssociation, ...] = ("OWNER", "MEMBER", "COLLABORATOR")
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
@@ -41,6 +55,17 @@ class ApprovalRules(_Strict):
     max_pending_per_principal: int = Field(default=20, gt=0)
 
 
+class FlowGuardRules(_Strict):
+    enabled: bool = True
+    window_minutes: int = Field(default=60, gt=0, le=10_080)
+    on_private_to_public: Literal["deny", "require_approval"] = "deny"
+    on_untrusted_author: Literal["require_approval", "deny"] = "require_approval"
+    trusted_associations: list[AuthorAssociation] = Field(
+        default_factory=lambda: list(_DEFAULT_TRUSTED)
+    )
+    single_repo: bool = False
+
+
 class DangerousTool(_Strict):
     enabled: bool
 
@@ -69,6 +94,7 @@ class Policy(_Strict):
     pull_requests: PullRequestRules = Field(default_factory=PullRequestRules)
     dangerous_tools: dict[str, DangerousTool] = Field(default_factory=dict)
     approvals: ApprovalRules = Field(default_factory=ApprovalRules)
+    flow_guard: FlowGuardRules = Field(default_factory=FlowGuardRules)
     roles: dict[str, Role]
     rate_limits: dict[str, RateLimit]
     stdio: StdioConfig = Field(default_factory=StdioConfig)

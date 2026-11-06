@@ -39,6 +39,8 @@ def test_serve_refuses_a_bad_policy_before_starting(
                 str(tmp_path / "a.jsonl"),
                 "--approvals",
                 str(tmp_path / "a.db"),
+                "--flow",
+                str(tmp_path / "f.db"),
             ]
         )
         == 1
@@ -63,6 +65,8 @@ def test_serve_refuses_a_short_key(
                 str(tmp_path / "a.jsonl"),
                 "--approvals",
                 str(tmp_path / "a.db"),
+                "--flow",
+                str(tmp_path / "f.db"),
             ]
         )
         == 1

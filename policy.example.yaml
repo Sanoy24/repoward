@@ -33,6 +33,15 @@ approvals:
   ttl_minutes: 15
   max_pending_per_principal: 20
 
+# Decides each write by what the agent has already read.
+flow_guard:
+  enabled: true
+  window_minutes: 60
+  on_private_to_public: deny # or require_approval
+  on_untrusted_author: require_approval # or deny
+  trusted_associations: [OWNER, MEMBER, COLLABORATOR]
+  single_repo: false
+
 roles:
   reader:
     tools:

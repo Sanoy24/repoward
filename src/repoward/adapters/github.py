@@ -127,6 +127,14 @@ class GitHubClient:
         except ValueError as exc:
             raise ToolError("GitHub returned a response that could not be read.") from exc
 
+    async def repo_is_private(self, repo: str) -> bool:
+        """Whether a repository is private. Raises if GitHub gives no clear answer."""
+        document = await self.get_json(repo_path(repo))
+        private = document.get("private") if isinstance(document, dict) else None
+        if not isinstance(private, bool):
+            raise ToolError("GitHub returned an unexpected response.")
+        return private
+
     async def get_redirect_location(self, path: str) -> str:
         """Request an endpoint that answers 302, returning where it points."""
         try:

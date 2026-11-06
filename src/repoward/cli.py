@@ -19,6 +19,7 @@ from repoward.audit import (
     verify_log,
     write_checkpoint,
 )
+from repoward.flow import FlowStore, FlowStoreError
 from repoward.policy.loader import PolicyError, load_policy
 from repoward.sanitize import display_safe
 from repoward.server import run_stdio
@@ -75,8 +76,8 @@ def _serve(args: argparse.Namespace) -> int:
         _error(str(exc))
         return 1
     try:
-        run_stdio(compiled, args.audit, args.approvals, key)
-    except ApprovalStoreError as exc:
+        run_stdio(compiled, args.audit, args.approvals, args.flow, key)
+    except (ApprovalStoreError, FlowStoreError) as exc:
         _error(str(exc))
         return 1
     return 0
@@ -189,6 +190,36 @@ def _approvals_deny(args: argparse.Namespace) -> int:
     return _decide(args, approved=False)
 
 
+def _flow_status(args: argparse.Namespace) -> int:
+    labels = FlowStore(args.db).active()
+    if not labels:
+        print("No active labels.")
+    for label in labels:
+        print(
+            f"{display_safe(label.principal)}  {display_safe(label.kind)}  "
+            f"{display_safe(label.source)}  expires {_when(label.expires_at)}"
+        )
+    return 0
+
+
+def _flow_reset(args: argparse.Namespace) -> int:
+    """Audit first: if the reset cannot be recorded, it does not happen."""
+    store = FlowStore(args.db)
+    try:
+        AuditLog(args.audit, load_hmac_key(DEFAULT_KEY_ENV)).append(
+            {
+                "event": "flow_reset",
+                "principal": args.principal,
+                "decided_by": getpass.getuser(),
+            }
+        )
+    except (AuditWriteError, AuditKeyError) as exc:
+        _error(f"not reset, because the reset could not be audited: {exc}")
+        return 1
+    print(f"Cleared {store.reset(args.principal)} labels.")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="repoward", description=__doc__)
     parser.add_argument("--version", action="version", version=version("repoward"))
@@ -198,6 +229,7 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--policy", type=Path, required=True, help="policy YAML file")
     serve.add_argument("--audit", type=Path, required=True, help="audit JSONL file")
     serve.add_argument("--approvals", type=Path, required=True, help="approvals database")
+    serve.add_argument("--flow", type=Path, required=True, help="flow guard database")
     serve.set_defaults(run=_serve)
 
     validate = commands.add_parser("validate-policy", help="check a policy file")
@@ -236,6 +268,20 @@ def _build_parser() -> argparse.ArgumentParser:
         decision.add_argument("id")
         decision.add_argument("--audit", type=Path, required=True, help="audit JSONL file")
         decision.set_defaults(run=handler)
+
+    flow = commands.add_parser(
+        "flow", help="inspect or clear what agents are marked as having read"
+    )
+    flow.add_argument("--db", type=Path, required=True, help="flow guard database")
+    flow_commands = flow.add_subparsers(dest="flow_command", required=True)
+
+    status = flow_commands.add_parser("status", help="show active labels")
+    status.set_defaults(run=_flow_status)
+
+    reset = flow_commands.add_parser("reset", help="clear labels so writes are allowed again")
+    reset.add_argument("--principal", help="only this principal (default: everyone)")
+    reset.add_argument("--audit", type=Path, required=True, help="audit JSONL file")
+    reset.set_defaults(run=_flow_reset)
     return parser
 
 
@@ -244,7 +290,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         return int(args.run(args))
-    except ApprovalStoreError as exc:
+    except (ApprovalStoreError, FlowStoreError) as exc:
         _error(str(exc))
         return 1
 
