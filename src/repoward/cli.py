@@ -22,6 +22,7 @@ from repoward.audit import (
 )
 from repoward.flow import FlowStore, FlowStoreError
 from repoward.policy.loader import PolicyError, load_policy
+from repoward.policy.replay import ReplayError, ReplayReport, Row, replay_log
 from repoward.sanitize import display_safe
 from repoward.server import run_stdio
 from repoward.setup import (
@@ -300,6 +301,45 @@ def _flow_reset(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_row(row: Row) -> None:
+    where = display_safe(row.repo or "-")
+    print(
+        f"  seq {row.seq}  {display_safe(row.tool)}  {where}: "
+        f"{row.recorded} -> {row.replayed}  ({display_safe(row.reason)})"
+    )
+
+
+def _print_replay(report: ReplayReport) -> None:
+    print(
+        f"{report.decisions} decisions: {report.unchanged} unchanged, "
+        f"{len(report.changed)} changed, {len(report.unknown)} unknown"
+    )
+    if report.changed:
+        print("\nChanged:")
+        for row in report.changed:
+            _print_row(row)
+    if report.unknown:
+        print("\nUnknown (the log does not hold what this decision depends on):")
+        for row in report.unknown:
+            _print_row(row)
+    print("\nThis assumes the agent would have made the same calls under the new policy.")
+
+
+def _policy_replay(args: argparse.Namespace) -> int:
+    try:
+        compiled = load_policy(args.policy)
+    except PolicyError as exc:
+        _print_policy_error(args.policy, exc)
+        return 1
+    try:
+        path = args.file or default_dir() / AUDIT_FILE
+        _print_replay(replay_log(path, compiled, _audit_key(args)))
+    except (ReplayError, AuditKeyError) as exc:
+        _error(str(exc))
+        return 1
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="repoward", description=__doc__)
     parser.add_argument("--version", action="version", version=version("repoward"))
@@ -326,6 +366,17 @@ def _build_parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate-policy", help="check a policy file")
     validate.add_argument("path", type=Path, nargs="?")
     validate.set_defaults(run=_validate_policy)
+
+    policy = commands.add_parser("policy", help="work with policy files")
+    policy_commands = policy.add_subparsers(dest="policy_command", required=True)
+
+    replay = policy_commands.add_parser(
+        "replay", help="report which past decisions a policy would change"
+    )
+    replay.add_argument("file", type=Path, nargs="?", help="audit JSONL file")
+    replay.add_argument("--policy", type=Path, required=True, help="policy YAML file to try")
+    replay.add_argument("--key-env", help="environment variable holding the HMAC key")
+    replay.set_defaults(run=_policy_replay)
 
     audit = commands.add_parser("audit", help="work with audit logs")
     audit_commands = audit.add_subparsers(dest="audit_command", required=True)

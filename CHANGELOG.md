@@ -5,6 +5,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Added
+
+- `repoward policy replay` reports which recorded decisions a policy would change, and says `unknown`
+  where the log does not hold what a decision depends on. It never contacts GitHub.
+- Audit decision records now include `flow_trusted`, the flow guard's trusted associations at that
+  moment, or null when the guard was off.
+
 ## [0.2.0] - 2026-11-06
 
 ### Added

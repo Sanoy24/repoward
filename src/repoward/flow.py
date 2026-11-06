@@ -117,6 +117,45 @@ class FlowStore:
             return cursor.rowcount
 
 
+def flow_rule(
+    rules: FlowGuardRules, private_to_public: bool, other_repo: bool, untrusted: bool
+) -> Decision | None:
+    """Decide a write from what is known about the principal. None means no objection."""
+    if private_to_public:
+        if rules.on_private_to_public == "deny":
+            return Decision(
+                Effect.DENY,
+                "flow.private_to_public",
+                "This agent has read private content, so it cannot write to a public "
+                "repository. A person can clear this with repoward flow reset.",
+            )
+        return Decision(
+            Effect.APPROVAL_REQUIRED,
+            "flow.private_to_public",
+            "This write needs human approval because the agent has read private content.",
+        )
+    if other_repo:
+        return Decision(
+            Effect.DENY,
+            "flow.single_repo",
+            "This agent is limited to one repository until a person resets it.",
+        )
+    if untrusted:
+        if rules.on_untrusted_author == "deny":
+            return Decision(
+                Effect.DENY,
+                "flow.untrusted_author",
+                "This agent has read text from an untrusted author, so it cannot write. "
+                "A person can clear this with repoward flow reset.",
+            )
+        return Decision(
+            Effect.APPROVAL_REQUIRED,
+            "flow.untrusted_author",
+            "This write needs human approval because the agent read untrusted text.",
+        )
+    return None
+
+
 class FlowGuard:
     def __init__(
         self,
@@ -131,6 +170,10 @@ class FlowGuard:
         self._clock = clock
         self._window = rules.window_minutes * 60.0
         self._visibility: dict[str, tuple[bool, float]] = {}
+
+    @property
+    def trusted_associations(self) -> list[str]:
+        return sorted(self._rules.trusted_associations)
 
     async def _is_private(self, repo: str) -> bool | None:
         """Repository visibility, or None if GitHub could not say."""
@@ -158,53 +201,27 @@ class FlowGuard:
         try:
             labels = await self._active(principal)
             kinds = {label.kind for label in labels}
-            if (
+            # An unknown target is treated as public.
+            private_to_public = (
                 repo is not None
                 and PRIVATE_READ in kinds
                 and await self._is_private(repo) is not True
-            ):
-                # An unknown target is treated as public.
-                if self._rules.on_private_to_public == "deny":
-                    return Decision(
-                        Effect.DENY,
-                        "flow.private_to_public",
-                        "This agent has read private content, so it cannot write to a public "
-                        "repository. A person can clear this with repoward flow reset.",
-                    )
-                return Decision(
-                    Effect.APPROVAL_REQUIRED,
-                    "flow.private_to_public",
-                    "This write needs human approval because the agent has read private content.",
-                )
-            if self._rules.single_repo and repo is not None:
-                touched = [label.source for label in labels if label.kind == TOUCHED_REPO]
-                if touched and touched[0] != repo.casefold():
-                    return Decision(
-                        Effect.DENY,
-                        "flow.single_repo",
-                        "This agent is limited to one repository until a person resets it.",
-                    )
-                await self._add(principal, TOUCHED_REPO, repo.casefold())
-            if UNTRUSTED_INPUT in kinds:
-                if self._rules.on_untrusted_author == "deny":
-                    return Decision(
-                        Effect.DENY,
-                        "flow.untrusted_author",
-                        "This agent has read text from an untrusted author, so it cannot write. "
-                        "A person can clear this with repoward flow reset.",
-                    )
-                return Decision(
-                    Effect.APPROVAL_REQUIRED,
-                    "flow.untrusted_author",
-                    "This write needs human approval because the agent read untrusted text.",
-                )
+            )
+            limited = self._rules.single_repo and repo is not None
+            touched = [label.source for label in labels if label.kind == TOUCHED_REPO]
+            other_repo = limited and bool(touched) and touched[0] != str(repo).casefold()
+            decision = flow_rule(
+                self._rules, private_to_public, other_repo, UNTRUSTED_INPUT in kinds
+            )
+            if limited and not private_to_public and not other_repo:
+                await self._add(principal, TOUCHED_REPO, str(repo).casefold())
+            return decision
         except FlowStoreError:
             return Decision(
                 Effect.DENY,
                 "flow.unavailable",
                 "This write was blocked because the flow guard's state is unavailable.",
             )
-        return None
 
     async def record_read(
         self, principal: str, repo: str | None, taints: Sequence[Taint]

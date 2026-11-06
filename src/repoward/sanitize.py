@@ -10,7 +10,7 @@ from typing import Any
 
 REDACTED = "[REDACTED]"
 _MAX_AUDIT_STRING = 512
-_MAX_ITEMS = 50
+MAX_AUDIT_ITEMS = 50
 _MAX_DEPTH = 6
 _CONTENT_FIELDS = {"body", "content", "message", "title"}
 _SENSITIVE_KEY = re.compile(r"authorization|password|passwd|secret|token|api_?key", re.I)
@@ -82,7 +82,7 @@ def redact_for_audit(value: Any, depth: int = 0, hide_content: bool = False) -> 
         return value
     if isinstance(value, dict):
         result: dict[str, Any] = {}
-        for key, item in list(value.items())[:_MAX_ITEMS]:
+        for key, item in list(value.items())[:MAX_AUDIT_ITEMS]:
             safe_key = truncate_text(redact_text(str(key)), _MAX_AUDIT_STRING)
             sensitive = _SENSITIVE_KEY.search(safe_key) is not None
             if sensitive:
@@ -94,7 +94,8 @@ def redact_for_audit(value: Any, depth: int = 0, hide_content: bool = False) -> 
         return result
     if isinstance(value, list | tuple):
         return [
-            redact_for_audit(item, depth + 1, hide_content) for item in list(value)[:_MAX_ITEMS]
+            redact_for_audit(item, depth + 1, hide_content)
+            for item in list(value)[:MAX_AUDIT_ITEMS]
         ]
     return f"[{type(value).__name__}]"
 
