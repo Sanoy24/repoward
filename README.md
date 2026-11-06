@@ -200,6 +200,26 @@ In `~/.gemini/settings.json`, reading the token from your environment:
 
 </details>
 
+<details>
+<summary><b>OpenCode</b></summary>
+
+In `opencode.json` in your project, or `~/.config/opencode/opencode.json`, reading the token from your
+environment:
+
+```json
+{
+  "mcp": {
+    "repoward": {
+      "type": "local",
+      "command": ["uvx", "repoward", "serve"],
+      "environment": { "GITHUB_TOKEN": "{env:GITHUB_TOKEN}" }
+    }
+  }
+}
+```
+
+</details>
+
 Any other client that can launch a stdio MCP server runs the same command: `uvx repoward serve`.
 
 If your client reports that the server failed to connect, run `uvx repoward serve` in a terminal
