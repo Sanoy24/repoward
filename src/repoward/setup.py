@@ -31,6 +31,11 @@ paths:
     - "**/id_rsa*"
     - ".gitmodules"
 
+# 'pat' reads GITHUB_TOKEN. 'app' issues a narrow token per call, and also needs client_id,
+# installation_id, and GITHUB_APP_PRIVATE_KEY_FILE in the environment.
+github_auth:
+  mode: pat
+
 branches:
   write_prefix: "agent/"
 
@@ -45,6 +50,8 @@ dangerous_tools:
 approvals:
   ttl_minutes: 15
   max_pending_per_principal: 20
+  # Let a real pull request review approve a merge. Needs a bot or GitHub App identity.
+  github_review: {{ enabled: false, min_permission: write }}
 
 flow_guard:
   enabled: true
