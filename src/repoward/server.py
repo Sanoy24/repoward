@@ -5,6 +5,7 @@ receives unknown tools and invalid arguments, so every attempt reaches the pipel
 audited. ``MCPServer`` would reject bad arguments before any code here ran.
 """
 
+import os
 from importlib.metadata import version
 from pathlib import Path
 
@@ -19,17 +20,20 @@ from mcp.types import (
     TextContent,
 )
 
+from repoward.adapters.github import GitHubClient
 from repoward.audit import AuditLog
 from repoward.pipeline import Pipeline, alert
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal, local_principal
 from repoward.registry import ToolRegistry
-from repoward.tools import system
+from repoward.tools import ci_read, github_read, system
 
 
-def build_registry() -> ToolRegistry:
+def build_registry(policy: CompiledPolicy, github: GitHubClient) -> ToolRegistry:
     registry = ToolRegistry()
     system.register(registry)
+    github_read.register(registry, github, policy)
+    ci_read.register(registry, github)
     return registry
 
 
@@ -62,12 +66,16 @@ def create_server(registry: ToolRegistry, pipeline: Pipeline, principal: Princip
 
 def run_stdio(policy: CompiledPolicy, audit_path: Path, hmac_key: bytes | None) -> None:
     """Serve over stdio until the client closes the connection."""
-    registry = build_registry()
+    github = GitHubClient(os.environ.get("GITHUB_TOKEN"))
+    registry = build_registry(policy, github)
     pipeline = Pipeline(policy, registry, AuditLog(audit_path, hmac_key))
     server = create_server(registry, pipeline, local_principal(policy.policy.stdio.role))
 
     async def serve() -> None:
-        async with stdio_server() as (read_stream, write_stream):
-            await server.run(read_stream, write_stream, server.create_initialization_options())
+        try:
+            async with stdio_server() as (read_stream, write_stream):
+                await server.run(read_stream, write_stream, server.create_initialization_options())
+        finally:
+            await github.aclose()
 
     anyio.run(serve)

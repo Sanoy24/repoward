@@ -19,6 +19,13 @@ uv run mypy
 uv run pytest
 ```
 
+A live suite runs against a real sandbox repository. It is skipped by default and needs
+`GITHUB_TOKEN` and `REPOWARD_LIVE_REPO`:
+
+```bash
+uv run pytest -m live
+```
+
 ## Pull requests
 
 - Keep each change small and focused.
