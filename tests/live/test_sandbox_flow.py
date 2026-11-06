@@ -2,9 +2,8 @@
 
 Skipped by default. Needs GITHUB_WRITE_TOKEN, REPOWARD_LIVE_REPO and REPOWARD_LIVE_PRIVATE_REPO.
 
-Every sandbox issue has the same owner, and a test cannot create an outside author. So where a
-test needs an untrusted author, its policy marks OWNER as not trusted, which exercises the same
-code using the real author_association GitHub returns.
+Where a test needs an untrusted author, its policy marks the issue author's association as not
+trusted, which exercises the same code using the real author_association GitHub returns.
 """
 
 import os
