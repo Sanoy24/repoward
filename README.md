@@ -1,8 +1,11 @@
 # repoward
 
+<!-- mcp-name: io.github.Sanoy24/repoward -->
+
 A GitHub MCP server that stops AI agents acting on what an attacker's issue told them to do.
 
-> **Status: pre-alpha, not yet released.** Do not rely on this project for security yet.
+> **Status: alpha.** It has not had an independent security review. Read
+> [the threat model](https://github.com/Sanoy24/repoward/blob/main/docs/THREAT_MODEL.md), especially the part about where it runs.
 
 ## The problem
 
@@ -26,8 +29,8 @@ encoding the data does not get around it. The state survives restarts, and no to
 A person can:
 
 ```bash
-uv run repoward flow --db flow.db status
-uv run repoward flow --db flow.db reset --audit audit.jsonl
+uvx repoward flow status
+uvx repoward flow reset
 ```
 
 What it does not do:
@@ -47,7 +50,7 @@ What it does not do:
 ## What works today
 
 - **Policy:** default-deny YAML with roles, repository allowlists and path denylists. See
-  [policy.example.yaml](policy.example.yaml).
+  [policy.example.yaml](https://github.com/Sanoy24/repoward/blob/main/policy.example.yaml).
 - **Single guarded path:** every tool attempt, including unknown tools and invalid arguments, passes
   through one pipeline and is logged.
 - **Audit log:** a hash-chained record of every decision, with optional HMAC and checkpoints.
@@ -76,24 +79,131 @@ Agents whose only route to GitHub is this server, such as CI bots and hosted age
 shell access can run `git` or read local credentials directly, so this server is not a security
 boundary for it.
 
-## Try it
+## Install
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requires [uv](https://docs.astral.sh/uv/). Create a starter policy, which also prints a client
+config to paste:
 
 ```bash
-git clone https://github.com/Sanoy24/repoward.git
-cd repoward
-uv sync
-cp policy.example.yaml policy.yaml  # then edit repos.allow
-uv run repoward validate-policy policy.yaml
-GITHUB_TOKEN=... uv run repoward serve --policy policy.yaml --audit audit.jsonl \
-  --approvals approvals.db --flow flow.db
+uvx repoward init --repo your-org/your-repo
 ```
 
-The server speaks MCP over stdio. Check the log with:
+The starter policy gives the server read-only tools. Add `--role contributor` for write tools. Files
+live in `~/.repoward`, or wherever `REPOWARD_HOME` points. An existing policy is never overwritten.
+
+Then add it to your MCP client, and use a token set up as described in [GitHub token](#github-token).
+Avoid committing a config that holds a real token.
+
+<details open>
+<summary><b>Claude Code</b></summary>
 
 ```bash
-uv run repoward audit verify audit.jsonl
+claude mcp add --env GITHUB_TOKEN=<your-token> --transport stdio repoward -- uvx repoward serve
+```
+
+</details>
+
+<details>
+<summary><b>Claude Desktop</b></summary>
+
+In `claude_desktop_config.json`, under Settings > Developer > Edit Config:
+
+```json
+{
+  "mcpServers": {
+    "repoward": {
+      "command": "uvx",
+      "args": ["repoward", "serve"],
+      "env": { "GITHUB_TOKEN": "<your-token>" }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Cursor</b></summary>
+
+In `~/.cursor/mcp.json`, reading the token from your environment:
+
+```json
+{
+  "mcpServers": {
+    "repoward": {
+      "command": "uvx",
+      "args": ["repoward", "serve"],
+      "env": { "GITHUB_TOKEN": "${env:GITHUB_TOKEN}" }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>VS Code</b></summary>
+
+In `.vscode/mcp.json` or your user profile's `mcp.json`, which prompts for the token once:
+
+```json
+{
+  "inputs": [
+    { "type": "promptString", "id": "github-token", "description": "GitHub token", "password": true }
+  ],
+  "servers": {
+    "repoward": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["repoward", "serve"],
+      "env": { "GITHUB_TOKEN": "${input:github-token}" }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Codex</b></summary>
+
+In `~/.codex/config.toml`, forwarding the token from your environment:
+
+```toml
+[mcp_servers.repoward]
+command = "uvx"
+args = ["repoward", "serve"]
+env_vars = ["GITHUB_TOKEN"]
+```
+
+</details>
+
+<details>
+<summary><b>Gemini CLI</b></summary>
+
+In `~/.gemini/settings.json`, reading the token from your environment:
+
+```json
+{
+  "mcpServers": {
+    "repoward": {
+      "command": "uvx",
+      "args": ["repoward", "serve"],
+      "env": { "GITHUB_TOKEN": "$GITHUB_TOKEN" }
+    }
+  }
+}
+```
+
+</details>
+
+Any other client that can launch a stdio MCP server runs the same command: `uvx repoward serve`.
+
+Useful commands:
+
+```bash
+uvx repoward validate-policy
+uvx repoward audit verify
 ```
 
 ## Approving risky actions
@@ -102,9 +212,9 @@ A call that needs approval does not run. It returns an `approval_id`, and a pers
 terminal:
 
 ```bash
-uv run repoward approvals --db approvals.db list
-uv run repoward approvals --db approvals.db show <id>
-uv run repoward approvals --db approvals.db approve <id> --audit audit.jsonl
+uvx repoward approvals list
+uvx repoward approvals show <id>
+uvx repoward approvals approve <id>
 ```
 
 The agent then repeats the same call. Pushing new commits changes the commit the call names, so
@@ -143,7 +253,8 @@ Limits to know about:
 - `ci_get_status` does not show third-party checks reported only through the Checks API, which
   GitHub documents as unavailable to fine-grained tokens.
 - `github_search_code` covers the default branch and files under 384 KB. New repositories can
-  return nothing until GitHub indexes them.
+  return nothing until GitHub indexes them, and its handling of real results has so far only been
+  tested against simulated responses.
 - `github_get_file` refuses symlinks, submodules, binary files and files over 1 MB. It walks the
   Git tree, so each read makes one request per folder in the path.
 - `ci_get_job_logs` fails closed if GitHub moves log storage to a host it does not recognize.
@@ -168,9 +279,9 @@ writes are then refused until an operator repairs the log. Secret redaction is b
 
 ## Contributing and security
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Please report vulnerabilities as described in
-[SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](https://github.com/Sanoy24/repoward/blob/main/CONTRIBUTING.md). Please report vulnerabilities as described in
+[SECURITY.md](https://github.com/Sanoy24/repoward/blob/main/SECURITY.md).
 
 ## License
 
-[MIT](LICENSE). This is an independent project, not affiliated with or endorsed by GitHub.
+[MIT](https://github.com/Sanoy24/repoward/blob/main/LICENSE). This is an independent project, not affiliated with or endorsed by GitHub.

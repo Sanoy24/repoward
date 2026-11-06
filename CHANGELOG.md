@@ -5,8 +5,11 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.1.0] - Unreleased
+
 ### Added
 
+- `repoward init`, which creates a safe starter policy and prints a client config.
 - MCP server over stdio with a `ping` tool.
 - Default-deny YAML policy with strict loading and `repoward validate-policy`.
 - Single guarded pipeline for every tool attempt.
