@@ -47,9 +47,11 @@ async def test_lists_ping_tool(client: Client) -> None:
         "github_commit_files",
         "github_create_branch",
         "github_create_pull_request",
+        "github_delete_branch",
         "github_get_file",
         "github_get_issue",
         "github_list_issues",
+        "github_merge_pull_request",
         "github_search_code",
         "ping",
     ]
@@ -118,6 +120,8 @@ async def test_real_stdio_process_is_governed(policy_file: Path, audit_path: Pat
             str(policy_file),
             "--audit",
             str(audit_path),
+            "--approvals",
+            str(audit_path.parent / "approvals.db"),
         ],
     )
     async with Client(params) as client:

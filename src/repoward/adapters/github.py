@@ -55,6 +55,8 @@ def raise_for_status(response: httpx.Response) -> None:
         raise ToolError("Not found, or the token cannot access it.")
     if status in {301, 302, 307, 308}:
         raise ToolError("GitHub answered with a redirect, which is not followed.")
+    if status == 405:
+        raise ToolError("GitHub says this cannot be done in the current state.")
     if status == 409:
         raise ToolError("GitHub reported a conflict; the branch may have moved.")
     if status == 422:
@@ -90,7 +92,7 @@ class GitHubClient:
         """GET a JSON document."""
         return await self._request("GET", path, params, None, accept)
 
-    async def send_json(self, method: str, path: str, body: dict[str, Any]) -> Any:
+    async def send_json(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         """Send a change once. Writes are never retried, so a failure is never doubled."""
         return await self._request(method, path, None, body, JSON_ACCEPT)
 
@@ -118,6 +120,8 @@ class GitHubClient:
                     chunks.append(chunk)
         except httpx.HTTPError as exc:
             raise ToolError("Could not reach GitHub.") from exc
+        if not chunks:
+            return None
         try:
             return json.loads(b"".join(chunks))
         except ValueError as exc:
