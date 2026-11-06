@@ -25,6 +25,7 @@ dependencies = [
     "httpx>=0.28,<0.29",
     "mcp>=2.3,<3",
     "pathspec>=1,<2",
+    "pyjwt[crypto]>=2.10,<3",
     "pydantic>=2.12,<3",
     "pyyaml>=6",
 ]

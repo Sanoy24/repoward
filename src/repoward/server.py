@@ -21,6 +21,7 @@ from mcp.types import (
 )
 
 from repoward.adapters.github import GitHubClient
+from repoward.adapters.github_auth import AppTokens, load_private_key
 from repoward.approvals.store import ApprovalStore
 from repoward.audit import AuditLog
 from repoward.flow import FlowGuard, FlowStore
@@ -37,8 +38,18 @@ def build_registry(policy: CompiledPolicy, github: GitHubClient) -> ToolRegistry
     github_read.register(registry, github, policy)
     ci_read.register(registry, github)
     github_write.register(registry, github)
-    github_dangerous.register(registry, github)
+    github_dangerous.register(registry, github, policy.policy.approvals.github_review)
     return registry
+
+
+def build_github_client(policy: CompiledPolicy) -> GitHubClient:
+    """Choose credentials from the policy. Raises AppConfigError if they cannot be used."""
+    auth = policy.policy.github_auth
+    if auth.mode == "app":
+        assert auth.client_id is not None  # noqa: S101
+        assert auth.installation_id is not None  # noqa: S101
+        return GitHubClient(AppTokens(auth.client_id, auth.installation_id, load_private_key()))
+    return GitHubClient(os.environ.get("GITHUB_TOKEN"))
 
 
 def create_server(registry: ToolRegistry, pipeline: Pipeline, principal: Principal) -> Server:
@@ -76,7 +87,7 @@ def run_stdio(
     hmac_key: bytes | None,
 ) -> None:
     """Serve over stdio until the client closes the connection."""
-    github = GitHubClient(os.environ.get("GITHUB_TOKEN"))
+    github = build_github_client(policy)
     registry = build_registry(policy, github)
     approval_rules = policy.policy.approvals
     approvals = ApprovalStore(

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
+from repoward.adapters.github_auth import AppConfigError
 from repoward.approvals.store import Approval, ApprovalStore, ApprovalStoreError
 from repoward.audit import (
     DEFAULT_KEY_ENV,
@@ -101,7 +102,7 @@ def _serve(args: argparse.Namespace) -> int:
     except OSError as exc:
         _error(f"cannot create repoward's files: {exc.strerror}")
         return 1
-    except (ApprovalStoreError, FlowStoreError) as exc:
+    except (ApprovalStoreError, FlowStoreError, AppConfigError) as exc:
         _error(str(exc))
         return 1
     return 0
