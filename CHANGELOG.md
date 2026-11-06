@@ -14,3 +14,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - Per-principal, per-tool rate limits.
 - Read tools for issues, code search, files, CI status and job logs.
 - Framing, invisible-character removal and redaction for text from GitHub users.
+- Write tools for branches, commits, draft pull requests and comments.
+- Policy rules for the branch prefix, draft-only pull requests and commit limits, and a scan that
+  refuses to send recognizable credentials.
+
+### Security
+
+- `github_get_file` could return a denied file through a symlink at an allowed path, because
+  GitHub's contents API follows such links and reports them as files. It now walks the Git tree
+  and refuses anything but a regular file. Never in a release.
