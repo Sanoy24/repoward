@@ -1,0 +1,51 @@
+# Copy to policy.yaml and edit. Check it with: repoward validate-policy policy.yaml
+version: 1
+default: deny # the only accepted value
+
+repos:
+  allow: ["your-org/sandbox-repo"]
+
+paths:
+  deny:
+    - ".github/**"
+    - "**/.git/**"
+    - "**/.env*"
+    - "**/secrets/**"
+    - "**/*.pem"
+    - "**/id_rsa*"
+    - ".gitmodules"
+
+# Listing a dangerous tool in a role is not enough. It must also be enabled here.
+dangerous_tools:
+  github_merge_pull_request: { enabled: false }
+  github_delete_branch: { enabled: true }
+
+roles:
+  reader:
+    tools:
+      - ping
+      - github_list_issues
+      - github_get_issue
+      - github_search_code
+      - github_get_file
+      - ci_get_status
+      - ci_get_job_logs
+  contributor:
+    inherits: reader
+    tools:
+      - github_create_branch
+      - github_commit_files
+      - github_create_pull_request
+      - github_comment
+  maintainer:
+    inherits: contributor
+    tools: [github_delete_branch, github_merge_pull_request]
+    require_approval: [github_delete_branch, github_merge_pull_request]
+
+rate_limits:
+  default: { per_minute: 30 }
+  github_commit_files: { per_minute: 5 }
+  github_search_code: { per_minute: 8 }
+
+stdio:
+  role: reader
