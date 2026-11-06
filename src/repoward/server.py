@@ -1,10 +1,12 @@
 """MCP server wiring.
 
 This uses the SDK's low-level ``Server`` on purpose. Its single ``on_call_tool`` handler also
-receives unknown tools and invalid arguments, so every attempt can pass through one guarded path.
+receives unknown tools and invalid arguments, so every attempt reaches the pipeline and is
+audited. ``MCPServer`` would reject bad arguments before any code here ran.
 """
 
 from importlib.metadata import version
+from pathlib import Path
 
 import anyio
 from mcp.server import Server, ServerRequestContext
@@ -15,50 +17,57 @@ from mcp.types import (
     ListToolsResult,
     PaginatedRequestParams,
     TextContent,
-    Tool,
 )
 
-PING = Tool(
-    name="ping",
-    description="Check that the server is reachable.",
-    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
-)
+from repoward.audit import AuditLog
+from repoward.pipeline import Pipeline, alert
+from repoward.policy.loader import CompiledPolicy
+from repoward.principal import Principal, local_principal
+from repoward.registry import ToolRegistry
+from repoward.tools import system
 
 
-def _text_result(text: str, *, is_error: bool = False) -> CallToolResult:
-    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=is_error)
+def build_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    system.register(registry)
+    return registry
 
 
-async def _list_tools(
-    ctx: ServerRequestContext, params: PaginatedRequestParams | None
-) -> ListToolsResult:
-    return ListToolsResult(tools=[PING])
+def create_server(registry: ToolRegistry, pipeline: Pipeline, principal: Principal) -> Server:
+    """Build the MCP server around one pipeline."""
 
+    async def list_tools(
+        ctx: ServerRequestContext, params: PaginatedRequestParams | None
+    ) -> ListToolsResult:
+        return ListToolsResult(tools=registry.list_tools())
 
-async def _call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
-    if params.name != PING.name:
-        return _text_result("Unknown tool.", is_error=True)
-    if params.arguments:
-        return _text_result("ping takes no arguments.", is_error=True)
-    return _text_result("pong")
+    async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
+        try:
+            return await pipeline.call(principal, params.name, params.arguments)
+        except Exception as exc:
+            # A raised exception would reach the model as an unreadable protocol error.
+            alert(f"pipeline failed: {type(exc).__name__}")
+            return CallToolResult(
+                content=[TextContent(type="text", text="The request could not be processed.")],
+                is_error=True,
+            )
 
-
-def create_server() -> Server:
-    """Build the MCP server."""
     return Server(
         "repoward",
         version=version("repoward"),
-        on_list_tools=_list_tools,
-        on_call_tool=_call_tool,
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
     )
 
 
-async def _serve_stdio() -> None:
-    server = create_server()
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
-
-
-def run_stdio() -> None:
+def run_stdio(policy: CompiledPolicy, audit_path: Path, hmac_key: bytes | None) -> None:
     """Serve over stdio until the client closes the connection."""
-    anyio.run(_serve_stdio)
+    registry = build_registry()
+    pipeline = Pipeline(policy, registry, AuditLog(audit_path, hmac_key))
+    server = create_server(registry, pipeline, local_principal(policy.policy.stdio.role))
+
+    async def serve() -> None:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, server.create_initialization_options())
+
+    anyio.run(serve)
