@@ -13,14 +13,15 @@ from pydantic import ValidationError
 from repoward.approvals.store import ApprovalStore, ApprovalStoreError, TooManyPendingError
 from repoward.audit import AuditLog, AuditWriteError
 from repoward.canonical import canonical_json, sha256_hex
-from repoward.catalog import RiskClass
+from repoward.catalog import TOOL_PERMISSIONS, RiskClass
 from repoward.flow import FlowGuard, FlowStoreError
 from repoward.policy.engine import Decision, Effect, decide
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal
 from repoward.ratelimit import RateLimiter
-from repoward.registry import ToolError, ToolInput, ToolRegistry, ToolSpec
+from repoward.registry import ReviewApproval, ToolError, ToolInput, ToolRegistry, ToolSpec
 from repoward.sanitize import redact_for_audit, redact_text, render_output
+from repoward.scope import call_scope
 
 MAX_OUTPUT_CHARS = 100_000
 _MAX_VALIDATION_ERRORS = 5
@@ -138,11 +139,21 @@ class Pipeline:
                     "This action needs approval, but approvals are unavailable right now.",
                 )
             if approval_id is None:
+                review = await self._find_review_approval(spec, validated, repo)
+                if review is not None:
+                    context = {
+                        **context,
+                        "approved_by": review.login,
+                        "review_id": review.review_id,
+                    }
+                    rule_id = "approvals.github_review"
+            if approval_id is None and rule_id != "approvals.github_review":
                 return await self._request_approval(
                     context, principal, spec, validated, normalized, decision.rule_id, repo
                 )
-            context = {**context, "approval_id": approval_id}
-            rule_id = "approvals.consumed"
+            if approval_id is not None:
+                context = {**context, "approval_id": approval_id}
+                rule_id = "approvals.consumed"
 
         try:
             await self._write(self._decision_fields(context, normalized, Effect.ALLOW, rule_id))
@@ -157,7 +168,8 @@ class Pipeline:
         status = "ok"
         error: str | None = None
         try:
-            output = await spec.handler(validated)
+            with call_scope(repo, TOOL_PERMISSIONS[tool]):
+                output = await spec.handler(validated)
             if not mutating and self._flow is not None:
                 # Saved before the content is returned: unrecorded content is never handed over.
                 for kind, source in await self._flow.record_read(principal.id, repo, output.taints):
@@ -222,6 +234,20 @@ class Pipeline:
         except AuditWriteError as exc:
             alert(f"audit flow label record failed: {exc}")
 
+    @staticmethod
+    async def _find_review_approval(
+        spec: ToolSpec, validated: ToolInput, repo: str | None
+    ) -> ReviewApproval | None:
+        """Look for a qualifying GitHub review. Any failure means no approval."""
+        if spec.review_approval is None:
+            return None
+        try:
+            with call_scope(repo, TOOL_PERMISSIONS[spec.name]):
+                return await spec.review_approval(validated)
+        except Exception as exc:
+            alert(f"review check failed: {type(exc).__name__}")
+            return None
+
     async def _consume_approval(
         self, principal: Principal, tool: str, repo: str | None, args_hash: str
     ) -> str | None:
@@ -246,7 +272,8 @@ class Pipeline:
         details = ""
         if spec.approval_context is not None:
             try:
-                details = await spec.approval_context(validated)
+                with call_scope(repo, TOOL_PERMISSIONS[spec.name]):
+                    details = await spec.approval_context(validated)
             except Exception as exc:
                 details = "Could not fetch details from GitHub."
                 alert(f"approval context failed: {type(exc).__name__}")

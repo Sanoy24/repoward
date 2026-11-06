@@ -5,6 +5,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-06
+
+### Added
+
+- GitHub App mode: each call uses a short-lived token limited to one repository and that tool's
+  permissions, and tokens wider than requested are refused.
+- A real pull request review can approve a merge, tied to the exact commit. Off by default.
+
 ## [0.1.1] - 2026-11-06
 
 ### Fixed

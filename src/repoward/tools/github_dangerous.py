@@ -5,14 +5,23 @@ approval covers one specific commit and not just a pull request number or branch
 """
 
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
+from urllib.parse import quote
 
 from pydantic import Field
 
 from repoward.adapters.github import GitHubClient, file_url_path, repo_path
 from repoward.catalog import RiskClass
 from repoward.policy.engine import Target
-from repoward.registry import ToolError, ToolInput, ToolOutput, ToolRegistry, ToolSpec
+from repoward.policy.models import GitHubReviewRules
+from repoward.registry import (
+    ReviewApproval,
+    ToolError,
+    ToolInput,
+    ToolOutput,
+    ToolRegistry,
+    ToolSpec,
+)
 from repoward.validation import GitRef, RepoName
 
 _SHA = re.compile(r"[0-9a-f]{40}")
@@ -42,7 +51,86 @@ def _delete_target(args: ToolInput) -> Target:
     return Target(repo=args.repo, write_branches=[args.branch])
 
 
-def register(registry: ToolRegistry, client: GitHubClient) -> None:
+_PERMISSION_RANK = {"none": 0, "read": 1, "write": 2, "admin": 3}
+_DECISIVE_STATES = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
+_REVIEW_PAGE_SIZE = 100
+_MAX_REVIEW_PAGES = 5
+
+
+async def _load_reviews(client: GitHubClient, repo: str, number: int) -> list[dict[str, Any]]:
+    """All reviews, oldest first. Too many to read completely means nothing can be concluded."""
+    reviews: list[dict[str, Any]] = []
+    for page in range(1, _MAX_REVIEW_PAGES + 1):
+        batch = await client.get_json(
+            f"{repo_path(repo)}/pulls/{number}/reviews",
+            {"per_page": _REVIEW_PAGE_SIZE, "page": page},
+        )
+        if not isinstance(batch, list):
+            raise ToolError("GitHub returned an unexpected response.")
+        reviews.extend(batch)
+        if len(batch) < _REVIEW_PAGE_SIZE:
+            return reviews
+    raise ToolError("This pull request has too many reviews to check safely.")
+
+
+async def _has_permission(client: GitHubClient, repo: str, login: str, minimum: str) -> bool:
+    document = await client.get_json(
+        f"{repo_path(repo)}/collaborators/{quote(login, safe='')}/permission"
+    )
+    level = document.get("permission") if isinstance(document, dict) else None
+    return _PERMISSION_RANK.get(str(level), 0) >= _PERMISSION_RANK[minimum]
+
+
+async def find_review_approval(
+    client: GitHubClient, args: "MergeInput", minimum: str
+) -> ReviewApproval | None:
+    """Find a human review that approves exactly this commit.
+
+    The reviewer must be a user other than the pull request's author and this server's own
+    identity, and must have the required access. Any reviewer's outstanding request for changes
+    blocks it. A person's latest decisive review is the one that counts.
+    """
+    pull = await client.get_json(f"{repo_path(args.repo)}/pulls/{args.number}")
+    if not isinstance(pull, dict) or pull.get("state") != "open":
+        return None
+    if (pull.get("head") or {}).get("sha") != args.head_sha:
+        return None
+    author = str((pull.get("user") or {}).get("login", "")).casefold()
+    if not author:
+        return None
+    own_identity = (await client.identity()).casefold()
+
+    latest: dict[str, dict[str, Any]] = {}
+    for review in await _load_reviews(client, args.repo, args.number):
+        login = str((review.get("user") or {}).get("login", "")).casefold()
+        if login and review.get("state") in _DECISIVE_STATES:
+            latest[login] = review
+    if any(review["state"] == "CHANGES_REQUESTED" for review in latest.values()):
+        return None
+
+    for login, review in latest.items():
+        user = review.get("user") or {}
+        if (
+            review["state"] != "APPROVED"
+            or review.get("commit_id") != args.head_sha
+            or login in {author, own_identity}
+            or user.get("type") != "User"
+        ):
+            continue
+        name = str(user.get("login"))
+        if await _has_permission(client, args.repo, name, minimum):
+            return ReviewApproval(name, int(review["id"]))
+    return None
+
+
+def register(
+    registry: ToolRegistry, client: GitHubClient, review_rules: GitHubReviewRules | None = None
+) -> None:
+    async def merge_review(args: ToolInput) -> ReviewApproval | None:
+        assert isinstance(args, MergeInput)  # noqa: S101
+        assert review_rules is not None  # noqa: S101
+        return await find_review_approval(client, args, review_rules.min_permission)
+
     async def merge_context(args: ToolInput) -> str:
         """What the approver sees. This text comes from GitHub and is treated as untrusted."""
         assert isinstance(args, MergeInput)  # noqa: S101
@@ -120,6 +208,7 @@ def register(registry: ToolRegistry, client: GitHubClient) -> None:
             merge,
             _merge_target,
             merge_context,
+            merge_review if review_rules is not None and review_rules.enabled else None,
         )
     )
     registry.register(

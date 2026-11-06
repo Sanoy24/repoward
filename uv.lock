@@ -990,7 +990,7 @@ wheels = [
 
 [[package]]
 name = "repoward"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -999,6 +999,7 @@ dependencies = [
     { name = "mcp" },
     { name = "pathspec" },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pyyaml" },
 ]
 
@@ -1019,6 +1020,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "pathspec", specifier = ">=1,<2" },
     { name = "pydantic", specifier = ">=2.12,<3" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10,<3" },
     { name = "pyyaml", specifier = ">=6" },
 ]
 

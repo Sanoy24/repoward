@@ -32,6 +32,14 @@ class ToolError(Exception):
 
 
 @dataclass(frozen=True)
+class ReviewApproval:
+    """A qualifying human review on GitHub."""
+
+    login: str
+    review_id: int
+
+
+@dataclass(frozen=True)
 class ToolSpec:
     name: str
     description: str
@@ -40,6 +48,7 @@ class ToolSpec:
     handler: Callable[[ToolInput], Awaitable[ToolOutput]]
     target: Callable[[ToolInput], Target]
     approval_context: Callable[[ToolInput], Awaitable[str]] | None = None
+    review_approval: Callable[[ToolInput], Awaitable[ReviewApproval | None]] | None = None
 
 
 class ToolRegistry:

@@ -50,9 +50,21 @@ class CommitLimits(_Strict):
     max_bytes: int = Field(default=200_000, gt=0)
 
 
+class GitHubReviewRules(_Strict):
+    enabled: bool = False
+    min_permission: Literal["write", "admin"] = "write"
+
+
+class GitHubAuth(_Strict):
+    mode: Literal["pat", "app"] = "pat"
+    client_id: str | None = None
+    installation_id: int | None = Field(default=None, gt=0)
+
+
 class ApprovalRules(_Strict):
     ttl_minutes: int = Field(default=15, gt=0, le=1440)
     max_pending_per_principal: int = Field(default=20, gt=0)
+    github_review: GitHubReviewRules = Field(default_factory=GitHubReviewRules)
 
 
 class FlowGuardRules(_Strict):
@@ -93,6 +105,7 @@ class Policy(_Strict):
     branches: BranchRules = Field(default_factory=BranchRules)
     pull_requests: PullRequestRules = Field(default_factory=PullRequestRules)
     dangerous_tools: dict[str, DangerousTool] = Field(default_factory=dict)
+    github_auth: GitHubAuth = Field(default_factory=GitHubAuth)
     approvals: ApprovalRules = Field(default_factory=ApprovalRules)
     flow_guard: FlowGuardRules = Field(default_factory=FlowGuardRules)
     roles: dict[str, Role]

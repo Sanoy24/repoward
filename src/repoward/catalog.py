@@ -27,3 +27,25 @@ TOOL_CATALOG: dict[str, RiskClass] = {
     "github_merge_pull_request": RiskClass.DANGEROUS,
     "github_delete_branch": RiskClass.DANGEROUS,
 }
+
+_ISSUES_READ = {"issues": "read", "pull_requests": "read"}
+_ISSUES_WRITE = {"issues": "write", "pull_requests": "write"}
+_CONTENTS_READ = {"contents": "read"}
+_CONTENTS_WRITE = {"contents": "write"}
+
+# The GitHub permissions each tool needs, used to limit its token when running as a GitHub App.
+TOOL_PERMISSIONS: dict[str, dict[str, str]] = {
+    "ping": {},
+    "github_list_issues": _ISSUES_READ,
+    "github_get_issue": _ISSUES_READ,
+    "github_search_code": _CONTENTS_READ,
+    "github_get_file": _CONTENTS_READ,
+    "ci_get_status": {"actions": "read", "statuses": "read"},
+    "ci_get_job_logs": {"actions": "read"},
+    "github_create_branch": _CONTENTS_WRITE,
+    "github_commit_files": _CONTENTS_WRITE,
+    "github_create_pull_request": {"contents": "read", "pull_requests": "write"},
+    "github_comment": _ISSUES_WRITE,
+    "github_merge_pull_request": {"contents": "write", "pull_requests": "read"},
+    "github_delete_branch": _CONTENTS_WRITE,
+}

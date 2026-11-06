@@ -167,6 +167,15 @@ def _semantic_problems(policy: Policy, resolved: dict[str, ResolvedRole]) -> lis
     for tool in policy.dangerous_tools:
         if TOOL_CATALOG.get(tool) is not RiskClass.DANGEROUS:
             problems.append((f"'{tool}' is not a dangerous tool", ("dangerous_tools", tool)))
+    auth = policy.github_auth
+    if auth.mode == "app" and (not auth.client_id or auth.installation_id is None):
+        problems.append(
+            ("github_auth mode 'app' needs client_id and installation_id", ("github_auth",))
+        )
+    if auth.mode == "pat" and (auth.client_id or auth.installation_id is not None):
+        problems.append(
+            ("client_id and installation_id only apply to mode 'app'", ("github_auth",))
+        )
     if "default" not in policy.rate_limits:
         problems.append(("rate_limits must define 'default'", ("rate_limits",)))
     for tool in policy.rate_limits:

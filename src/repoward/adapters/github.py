@@ -2,12 +2,13 @@
 
 import json
 import time
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import quote
 
 import httpx
 
 from repoward.registry import ToolError
+from repoward.scope import CallScope, call_scope, current_scope
 
 BASE_URL = "https://api.github.com"
 API_VERSION = "2026-03-10"
@@ -64,9 +65,46 @@ def raise_for_status(response: httpx.Response) -> None:
     raise ToolError(f"GitHub returned an unexpected status ({status}).")
 
 
-class GitHubClient:
+class TokenProvider(Protocol):
+    async def token(self, scope: CallScope | None, http: httpx.AsyncClient) -> str: ...
+
+    async def identity(self, http: httpx.AsyncClient) -> str: ...
+
+
+class StaticToken:
+    """One personal access token for every call. Its limits are whatever it was created with."""
+
     def __init__(self, token: str | None) -> None:
         self._token = token
+        self._identity: str | None = None
+
+    async def token(self, scope: CallScope | None, http: httpx.AsyncClient) -> str:
+        if not self._token:
+            raise ToolError("GITHUB_TOKEN is not set on the server.")
+        return self._token
+
+    async def identity(self, http: httpx.AsyncClient) -> str:
+        if self._identity is None:
+            token = await self.token(None, http)
+            try:
+                response = await http.get("/user", headers={"Authorization": f"Bearer {token}"})
+            except httpx.HTTPError as exc:
+                raise ToolError("Could not reach GitHub.") from exc
+            raise_for_status(response)
+            login = response.json().get("login") if response.content else None
+            if not isinstance(login, str) or not login:
+                raise ToolError("GitHub returned an unexpected response.")
+            self._identity = login
+        return self._identity
+
+
+class GitHubClient:
+    def __init__(self, credentials: str | TokenProvider | None) -> None:
+        self._provider: TokenProvider = (
+            StaticToken(credentials)
+            if credentials is None or isinstance(credentials, str)
+            else credentials
+        )
         self._http = httpx.AsyncClient(
             base_url=BASE_URL,
             follow_redirects=False,
@@ -78,10 +116,13 @@ class GitHubClient:
             },
         )
 
-    def _auth(self) -> dict[str, str]:
-        if not self._token:
-            raise ToolError("GITHUB_TOKEN is not set on the server.")
-        return {"Authorization": f"Bearer {self._token}"}
+    async def _auth(self) -> dict[str, str]:
+        token = await self._provider.token(current_scope(), self._http)
+        return {"Authorization": f"Bearer {token}"}
+
+    async def identity(self) -> str:
+        """The login this server acts as on GitHub."""
+        return await self._provider.identity(self._http)
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -105,7 +146,7 @@ class GitHubClient:
         accept: str,
     ) -> Any:
         """Make one request, refusing response bodies over the size cap."""
-        headers = {**self._auth(), "Accept": accept}
+        headers = {**(await self._auth()), "Accept": accept}
         try:
             async with self._http.stream(
                 method, path, params=params, json=body, headers=headers
@@ -129,7 +170,8 @@ class GitHubClient:
 
     async def repo_is_private(self, repo: str) -> bool:
         """Whether a repository is private. Raises if GitHub gives no clear answer."""
-        document = await self.get_json(repo_path(repo))
+        with call_scope(repo, {"metadata": "read"}):
+            document = await self.get_json(repo_path(repo))
         private = document.get("private") if isinstance(document, dict) else None
         if not isinstance(private, bool):
             raise ToolError("GitHub returned an unexpected response.")
@@ -138,7 +180,7 @@ class GitHubClient:
     async def get_redirect_location(self, path: str) -> str:
         """Request an endpoint that answers 302, returning where it points."""
         try:
-            response = await self._http.get(path, headers=self._auth())
+            response = await self._http.get(path, headers=await self._auth())
         except httpx.HTTPError as exc:
             raise ToolError("Could not reach GitHub.") from exc
         if response.status_code != 302:
