@@ -13,13 +13,21 @@ from pydantic import ValidationError
 from repoward.approvals.store import ApprovalStore, ApprovalStoreError, TooManyPendingError
 from repoward.audit import AuditLog, AuditWriteError
 from repoward.canonical import canonical_json, sha256_hex
-from repoward.catalog import TOOL_PERMISSIONS, RiskClass
+from repoward.catalog import RECEIPT_PERMISSIONS, TOOL_PERMISSIONS, RiskClass
 from repoward.flow import FlowGuard, FlowStoreError
 from repoward.policy.engine import Effect, decide, tighten
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal
 from repoward.ratelimit import RateLimiter
-from repoward.registry import ReviewApproval, ToolError, ToolInput, ToolRegistry, ToolSpec
+from repoward.receipts import ReceiptLedger
+from repoward.registry import (
+    ReviewApproval,
+    ToolError,
+    ToolInput,
+    ToolOutput,
+    ToolRegistry,
+    ToolSpec,
+)
 from repoward.sanitize import redact_for_audit, redact_text, render_output
 from repoward.scope import call_scope
 
@@ -61,6 +69,7 @@ class Pipeline:
         limiter: RateLimiter | None = None,
         approvals: ApprovalStore | None = None,
         flow: FlowGuard | None = None,
+        receipts: ReceiptLedger | None = None,
     ) -> None:
         self._policy = policy
         self._registry = registry
@@ -69,6 +78,7 @@ class Pipeline:
         self._instance_id = str(uuid.uuid4())
         self._approvals = approvals
         self._flow = flow
+        self._receipts = receipts
         self._degraded = False
 
     async def call(
@@ -170,6 +180,7 @@ class Pipeline:
         started = time.monotonic()
         status = "ok"
         error: str | None = None
+        output: ToolOutput | None = None
         try:
             with call_scope(repo, TOOL_PERMISSIONS[tool]):
                 output = await spec.handler(validated)
@@ -212,7 +223,69 @@ class Pipeline:
                 alert("degraded mode: refusing further changes until restart")
                 warning = "Warning: the action ran but its outcome could not be audited."
                 result.content.append(TextContent(type="text", text=warning))
+        if status == "ok" and output is not None and output.head_sha and repo is not None:
+            await self._post_receipt(context, principal, repo, output.head_sha)
         return result
+
+    async def _flow_labels(self, principal: Principal) -> str:
+        if self._flow is None:
+            return "off"
+        try:
+            return "yes" if await self._flow.has_labels(principal.id) else "no"
+        except FlowStoreError as exc:
+            alert(str(exc))
+            return "unknown"
+
+    async def _post_receipt(
+        self, context: dict[str, Any], principal: Principal, repo: str, sha: str
+    ) -> None:
+        """Audit a receipt, then post it. It is informational, so failing never fails the call."""
+        if self._receipts is None or self._degraded:
+            return
+        description = self._receipts.description(principal.id, await self._flow_labels(principal))
+        if description is None:
+            return
+        request_id = context["request_id"]
+        try:
+            await self._write(
+                {
+                    "event": "receipt",
+                    "request_id": request_id,
+                    "principal": principal.id,
+                    "repo": repo,
+                    "sha": sha,
+                    "description": description,
+                }
+            )
+        except AuditWriteError as exc:
+            alert(f"audit receipt record failed, so no receipt was posted: {exc}")
+            return
+        status = "ok"
+        error: str | None = None
+        try:
+            with call_scope(repo, RECEIPT_PERMISSIONS):
+                await self._receipts.post(repo, sha, description)
+        except ToolError as exc:
+            status = "error"
+            error = redact_text(str(exc))
+        except Exception as exc:
+            status = "error"
+            error = type(exc).__name__
+        if error is not None:
+            alert(f"receipt was not posted: {error}")
+        try:
+            await self._write(
+                {
+                    "event": "receipt_outcome",
+                    "request_id": request_id,
+                    "result_status": status,
+                    "error": error,
+                }
+            )
+        except AuditWriteError as exc:
+            alert(f"audit receipt outcome failed: {exc}")
+            self._degraded = True
+            alert("degraded mode: refusing further changes until restart")
 
     async def _record_label(self, context: dict[str, Any], kind: str, source: str) -> None:
         try:
@@ -336,7 +409,9 @@ class Pipeline:
         }
 
     async def _write(self, fields: dict[str, Any]) -> None:
-        await anyio.to_thread.run_sync(self._audit.append, fields)
+        record = await anyio.to_thread.run_sync(self._audit.append, fields)
+        if self._receipts is not None:
+            self._receipts.observe(record)
 
     async def _record_refusal(
         self, context: dict[str, Any], args: Any, effect: Effect, rule_id: str

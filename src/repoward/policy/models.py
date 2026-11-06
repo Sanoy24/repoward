@@ -78,6 +78,10 @@ class FlowGuardRules(_Strict):
     single_repo: bool = False
 
 
+class ReceiptRules(_Strict):
+    enabled: bool = False
+
+
 class DangerousTool(_Strict):
     enabled: bool
 
@@ -108,6 +112,7 @@ class Policy(_Strict):
     github_auth: GitHubAuth = Field(default_factory=GitHubAuth)
     approvals: ApprovalRules = Field(default_factory=ApprovalRules)
     flow_guard: FlowGuardRules = Field(default_factory=FlowGuardRules)
+    receipts: ReceiptRules = Field(default_factory=ReceiptRules)
     roles: dict[str, Role]
     rate_limits: dict[str, RateLimit]
     stdio: StdioConfig = Field(default_factory=StdioConfig)

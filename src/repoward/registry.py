@@ -25,6 +25,7 @@ class ToolOutput:
     text: str
     untrusted: tuple[UntrustedContent, ...] = ()
     taints: tuple[Taint, ...] = ()
+    head_sha: str | None = None  # A commit this call created or opened for review.
 
 
 class ToolError(Exception):

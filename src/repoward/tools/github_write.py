@@ -161,7 +161,9 @@ def register(registry: ToolRegistry, client: GitHubClient) -> None:
         await client.send_json(
             "PATCH", f"{base}/git/refs/{_ref_path(args.branch)}", {"sha": sha, "force": False}
         )
-        return ToolOutput(f"Committed {len(entries)} changes to {args.branch} as {sha}.")
+        return ToolOutput(
+            f"Committed {len(entries)} changes to {args.branch} as {sha}.", head_sha=sha
+        )
 
     async def create_pull_request(args: ToolInput) -> ToolOutput:
         assert isinstance(args, CreatePullRequestInput)  # noqa: S101
@@ -184,7 +186,11 @@ def register(registry: ToolRegistry, client: GitHubClient) -> None:
         kind = "draft pull request" if args.draft else "pull request"
         owner, name = args.repo.split("/", 1)
         url = f"https://github.com/{quote(owner)}/{quote(name)}/pull/{number}"
-        return ToolOutput(f"Created {kind} #{number}: {url}")
+        head = result.get("head")
+        sha = head.get("sha") if isinstance(head, dict) else None
+        # The pull request exists by now, so an odd response only means no receipt.
+        head_sha = sha if isinstance(sha, str) and _SHA.fullmatch(sha) else None
+        return ToolOutput(f"Created {kind} #{number}: {url}", head_sha=head_sha)
 
     async def comment(args: ToolInput) -> ToolOutput:
         assert isinstance(args, CommentInput)  # noqa: S101

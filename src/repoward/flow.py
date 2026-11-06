@@ -245,6 +245,10 @@ class FlowGuard:
                 await add(UNTRUSTED_INPUT, taint.source)
         return added
 
+    async def has_labels(self, principal: str) -> bool:
+        """Whether anything restricts this principal's writes. Raises FlowStoreError."""
+        return any(label.kind != TOUCHED_REPO for label in await self._active(principal))
+
     async def describe(self, principal: str) -> str:
         """Why this principal's writes are restricted, for the person reviewing an approval."""
         labels = await self._active(principal)
