@@ -47,7 +47,7 @@ What it does not do:
 - Maintainers of public repositories will see more approval requests. That is the cost of the
   default, and `trusted_associations` is configurable.
 
-## What works today
+## Features
 
 - **Policy:** default-deny YAML with roles, repository allowlists and path denylists. See
   [policy.example.yaml](https://github.com/Sanoy24/repoward/blob/main/policy.example.yaml).
