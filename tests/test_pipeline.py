@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from mcp.types import CallToolResult, TextContent
 
+from repoward.approvals.store import ApprovalStore
 from repoward.audit import AuditLog, AuditWriteError, verify_log
 from repoward.catalog import TOOL_CATALOG, RiskClass
 from repoward.pipeline import MAX_OUTPUT_CHARS, Pipeline
@@ -54,7 +55,8 @@ class Harness:
             "github_merge_pull_request",
         ):
             self.registry.register(self._spec(name))
-        self.pipeline = Pipeline(policy, self.registry, AuditLog(self.path))
+        self.store = ApprovalStore(tmp_path / "approvals.db")
+        self.pipeline = Pipeline(policy, self.registry, AuditLog(self.path), approvals=self.store)
 
     def _spec(self, name: str) -> ToolSpec:
         async def handler(_: ToolInput) -> ToolOutput:
@@ -68,7 +70,9 @@ class Harness:
         return ToolSpec(name, "test tool", TOOL_CATALOG[name], FileArgs, handler, target)
 
     def use_failing_audit(self, failing: set[str]) -> None:
-        self.pipeline = Pipeline(self.policy, self.registry, FailingAudit(self.path, failing))
+        self.pipeline = Pipeline(
+            self.policy, self.registry, FailingAudit(self.path, failing), approvals=self.store
+        )
 
     def records(self) -> list[dict[str, Any]]:
         if not self.path.exists():

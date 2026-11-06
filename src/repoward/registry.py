@@ -37,6 +37,7 @@ class ToolSpec:
     input_model: type[ToolInput]
     handler: Callable[[ToolInput], Awaitable[ToolOutput]]
     target: Callable[[ToolInput], Target]
+    approval_context: Callable[[ToolInput], Awaitable[str]] | None = None
 
 
 class ToolRegistry:

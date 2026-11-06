@@ -10,6 +10,7 @@ import anyio.to_thread
 from mcp.types import CallToolResult, TextContent
 from pydantic import ValidationError
 
+from repoward.approvals.store import ApprovalStore, ApprovalStoreError, TooManyPendingError
 from repoward.audit import AuditLog, AuditWriteError
 from repoward.canonical import canonical_json, sha256_hex
 from repoward.catalog import RiskClass
@@ -17,7 +18,7 @@ from repoward.policy.engine import Effect, decide
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal
 from repoward.ratelimit import RateLimiter
-from repoward.registry import ToolError, ToolRegistry
+from repoward.registry import ToolError, ToolInput, ToolRegistry, ToolSpec
 from repoward.sanitize import redact_for_audit, redact_text, render_output
 
 MAX_OUTPUT_CHARS = 100_000
@@ -56,12 +57,14 @@ class Pipeline:
         registry: ToolRegistry,
         audit: AuditLog,
         limiter: RateLimiter | None = None,
+        approvals: ApprovalStore | None = None,
     ) -> None:
         self._policy = policy
         self._registry = registry
         self._audit = audit
         self._limiter = limiter or RateLimiter(policy.rate_limits)
         self._instance_id = str(uuid.uuid4())
+        self._approvals = approvals
         self._degraded = False
 
     async def call(
@@ -102,14 +105,6 @@ class Pipeline:
             message = f"Rate limit reached. Try again in {hit.retry_after_seconds} seconds."
             return await self._refuse(context, normalized, hit.rule_id, message)
 
-        if decision.effect is Effect.APPROVAL_REQUIRED:
-            await self._record_refusal(context, normalized, decision.effect, decision.rule_id)
-            body = {"status": "approval_required", "summary": decision.message}
-            return CallToolResult(
-                content=[TextContent(type="text", text=json.dumps(body))],
-                structured_content=body,
-            )
-
         mutating = spec.risk is not RiskClass.READ
         if mutating and self._degraded:
             return await self._refuse(
@@ -119,10 +114,29 @@ class Pipeline:
                 "Changes are disabled because the audit log failed. An operator must restart.",
             )
 
+        rule_id = decision.rule_id
+        if decision.effect is Effect.APPROVAL_REQUIRED:
+            repo = spec.target(validated).repo
+            args_hash = _hash_args(normalized)
+            try:
+                approval_id = await self._consume_approval(principal, tool, repo, args_hash)
+            except ApprovalStoreError as exc:
+                alert(str(exc))
+                return await self._refuse(
+                    context,
+                    normalized,
+                    "approvals.unavailable",
+                    "This action needs approval, but approvals are unavailable right now.",
+                )
+            if approval_id is None:
+                return await self._request_approval(
+                    context, principal, spec, validated, normalized, decision.rule_id, repo
+                )
+            context = {**context, "approval_id": approval_id}
+            rule_id = "approvals.consumed"
+
         try:
-            await self._write(
-                self._decision_fields(context, normalized, decision.effect, decision.rule_id)
-            )
+            await self._write(self._decision_fields(context, normalized, Effect.ALLOW, rule_id))
         except AuditWriteError as exc:
             alert(f"audit decision record failed: {exc}")
             if mutating:
@@ -164,6 +178,78 @@ class Pipeline:
                 warning = "Warning: the action ran but its outcome could not be audited."
                 result.content.append(TextContent(type="text", text=warning))
         return result
+
+    async def _consume_approval(
+        self, principal: Principal, tool: str, repo: str | None, args_hash: str
+    ) -> str | None:
+        if self._approvals is None:
+            raise ApprovalStoreError("no approval store is configured")
+        return await anyio.to_thread.run_sync(
+            self._approvals.consume, principal.id, tool, repo, args_hash
+        )
+
+    async def _request_approval(
+        self,
+        context: dict[str, Any],
+        principal: Principal,
+        spec: ToolSpec,
+        validated: ToolInput,
+        normalized: Any,
+        rule_id: str,
+        repo: str | None,
+    ) -> CallToolResult:
+        """Record a request for a human. The tool does not run."""
+        assert self._approvals is not None  # noqa: S101
+        details = ""
+        if spec.approval_context is not None:
+            try:
+                details = await spec.approval_context(validated)
+            except Exception as exc:
+                details = "Could not fetch details from GitHub."
+                alert(f"approval context failed: {type(exc).__name__}")
+        try:
+            approval = await anyio.to_thread.run_sync(
+                self._approvals.request,
+                principal.id,
+                spec.name,
+                repo,
+                _hash_args(normalized),
+                json.dumps(redact_for_audit(normalized), ensure_ascii=True, sort_keys=True),
+                redact_text(details),
+            )
+        except TooManyPendingError:
+            return await self._refuse(
+                context,
+                normalized,
+                "approvals.too_many_pending",
+                "Too many approval requests are waiting. Ask a human to review them.",
+            )
+        except ApprovalStoreError as exc:
+            alert(str(exc))
+            return await self._refuse(
+                context,
+                normalized,
+                "approvals.unavailable",
+                "This action needs approval, but approvals are unavailable right now.",
+            )
+        await self._record_refusal(
+            {**context, "approval_id": approval.id},
+            normalized,
+            Effect.APPROVAL_REQUIRED,
+            rule_id,
+        )
+        body = {
+            "status": "approval_required",
+            "approval_id": approval.id,
+            "summary": (
+                f"{spec.name} was not run. A human must approve request {approval.id}; "
+                "then call the tool again with the same arguments."
+            ),
+        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(body))],
+            structured_content=body,
+        )
 
     @staticmethod
     def _decision_fields(
