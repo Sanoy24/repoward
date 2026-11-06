@@ -2,8 +2,8 @@
 
 A GitHub MCP server that stops AI agents acting on what an attacker's issue told them to do.
 
-> **Status: pre-alpha.** Read-only GitHub tools work. Write tools, approvals and flow guard are not
-> built yet. Do not rely on this project for security.
+> **Status: pre-alpha.** Read and write tools work. Approvals and flow guard are not built yet, so
+> the attack described below is not stopped yet. Do not rely on this project for security.
 
 ## The problem
 
@@ -21,6 +21,10 @@ do not stop the sequence.
 - **Rate limits:** per principal and per tool.
 - **Read tools:** `github_list_issues`, `github_get_issue`, `github_search_code`, `github_get_file`,
   `ci_get_status` and `ci_get_job_logs`.
+- **Write tools:** `github_create_branch`, `github_commit_files`, `github_create_pull_request` and
+  `github_comment`. Writes only reach branches with the configured prefix (`agent/` by default),
+  pull requests are draft only by default, commit sizes are limited, nothing is forced or retried,
+  and text holding a recognizable credential is refused.
 - **Untrusted content handling:** text from GitHub users comes back wrapped in a tag with a random
   id per response, after invisible characters, hidden HTML comments and images are removed and
   secrets are redacted. This is a mitigation, not a guarantee: a model can still be fooled, which
@@ -28,7 +32,6 @@ do not stop the sequence.
 
 ## Planned
 
-- **Write tools:** branches, commits, comments and draft pull requests.
 - **Flow guard:** tracks what the agent has read, using facts from GitHub, then blocks
   private-to-public writes and requires approval for writes after untrusted input.
 - **Approvals:** risky actions wait for a human, tied to the exact commit.
@@ -74,14 +77,23 @@ that repository permissions appear. The read tools need these, all read-only:
 | Actions | `ci_get_status`, `ci_get_job_logs` |
 | Commit statuses | `ci_get_status` |
 
+To use the write tools, also give it read and write access to Contents, Issues and Pull requests.
+Leave the Workflows permission off: GitHub then refuses workflow file changes even if your policy
+allows the path.
+
+`Contents: write` lets a token push to any branch and merge, and GitHub cannot limit it to `agent/`
+branches. That limit lives in this server, so also protect your default branch with a ruleset that
+requires pull requests and has no bypass for the token's owner. If the token leaks or the server is
+misconfigured, that ruleset still holds.
+
 Limits to know about:
 
 - `ci_get_status` does not show third-party checks reported only through the Checks API, which
   GitHub documents as unavailable to fine-grained tokens.
 - `github_search_code` covers the default branch and files under 384 KB. New repositories can
   return nothing until GitHub indexes them.
-- `github_get_file` refuses symlinks, submodules, binary files and files over 1 MB, and fails
-  in directories GitHub lists only partly.
+- `github_get_file` refuses symlinks, submodules, binary files and files over 1 MB. It walks the
+  Git tree, so each read makes one request per folder in the path.
 - `ci_get_job_logs` fails closed if GitHub moves log storage to a host it does not recognize.
 
 ## What the audit log proves

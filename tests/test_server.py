@@ -43,6 +43,10 @@ async def test_lists_ping_tool(client: Client) -> None:
     assert names == [
         "ci_get_job_logs",
         "ci_get_status",
+        "github_comment",
+        "github_commit_files",
+        "github_create_branch",
+        "github_create_pull_request",
         "github_get_file",
         "github_get_issue",
         "github_list_issues",

@@ -15,6 +15,14 @@ paths:
     - "**/id_rsa*"
     - ".gitmodules"
 
+# Writes are only allowed on branches with this prefix.
+branches:
+  write_prefix: "agent/"
+
+# Pull requests are draft only unless this is true.
+pull_requests:
+  allow_non_draft: false
+
 # Listing a dangerous tool in a role is not enough. It must also be enabled here.
 dangerous_tools:
   github_merge_pull_request: { enabled: false }
@@ -37,6 +45,7 @@ roles:
       - github_commit_files
       - github_create_pull_request
       - github_comment
+    commit_limits: { max_files: 20, max_bytes: 200000 }
   maintainer:
     inherits: contributor
     tools: [github_delete_branch, github_merge_pull_request]

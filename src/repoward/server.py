@@ -26,7 +26,7 @@ from repoward.pipeline import Pipeline, alert
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal, local_principal
 from repoward.registry import ToolRegistry
-from repoward.tools import ci_read, github_read, system
+from repoward.tools import ci_read, github_read, github_write, system
 
 
 def build_registry(policy: CompiledPolicy, github: GitHubClient) -> ToolRegistry:
@@ -34,6 +34,7 @@ def build_registry(policy: CompiledPolicy, github: GitHubClient) -> ToolRegistry
     system.register(registry)
     github_read.register(registry, github, policy)
     ci_read.register(registry, github)
+    github_write.register(registry, github)
     return registry
 
 
