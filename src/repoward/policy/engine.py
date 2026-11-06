@@ -36,6 +36,15 @@ class Decision:
     message: str = ""
 
 
+def tighten(decision: Decision, flow: Decision | None) -> Decision:
+    """Apply the flow guard, which can only tighten what policy decided."""
+    if flow is None or flow.effect is Effect.ALLOW or decision.effect is Effect.DENY:
+        return decision
+    if flow.effect is Effect.APPROVAL_REQUIRED and decision.effect is Effect.APPROVAL_REQUIRED:
+        return decision
+    return flow
+
+
 def decide(
     compiled: CompiledPolicy,
     principal: Principal,

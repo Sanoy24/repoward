@@ -68,13 +68,11 @@ What it does not do:
   only the permissions that tool needs, and GitHub enforces those limits itself.
 - **Pull request review as approval (optional):** a merge can be approved by a real GitHub review
   of the exact commit.
+- **Policy replay:** see which past decisions a policy edit would change before you deploy it.
 - **Untrusted content handling:** text from GitHub users comes back wrapped in a tag with a random
   id per response, after invisible characters, hidden HTML comments and images are removed and
   secrets are redacted. This is a mitigation, not a guarantee: a model can still be fooled, which
   is why the rules above are enforced outside the model.
-
-## Planned
-
 
 ## Who it is for
 
@@ -334,6 +332,35 @@ Set `REPOWARD_AUDIT_HMAC_KEY` to use HMAC, and store the output of `repoward aud
 somewhere the server cannot write. Comment bodies, titles, commit messages and file contents are
 logged as a length and hash rather than as text. A crash during a write leaves an incomplete last line, and new
 writes are then refused until an operator repairs the log. Secret redaction is best effort.
+
+## Trying a policy change
+
+Replay a policy against your audit log to see what it would have done differently:
+
+```bash
+repoward policy replay --policy new-policy.yaml
+```
+
+```text
+3 decisions: 1 unchanged, 1 changed, 1 unknown
+
+Changed:
+  seq 2  github_comment  org/app: allow -> approval_required  (flow.untrusted_author)
+
+Unknown (the log does not hold what this decision depends on):
+  seq 5  github_commit_files  org/app: allow -> unknown  (it depends on file sizes or text the log does not hold)
+```
+
+It never contacts GitHub and changes nothing, and it refuses a log that fails verification. Add
+`--key-env` to name the variable holding your HMAC key if the log uses one.
+
+The log leaves out content, so some answers are not knowable. A decision can depend on a file's exact
+size, on whether hidden text held a credential, or on flow guard facts that were not recorded, such as
+the visibility of a repository the log never read. Replay reports those as `unknown` and does not
+guess.
+
+Replay assumes the agent would have made the same calls. A real agent that was refused would have
+done something else, so treat the report as a guide to the policy's effect and not as a prediction.
 
 ## Contributing and security
 

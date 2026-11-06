@@ -28,6 +28,11 @@ TOOL_CATALOG: dict[str, RiskClass] = {
     "github_delete_branch": RiskClass.DANGEROUS,
 }
 
+# Read tools that can return text written by other people, which sets the untrusted_input label.
+UNTRUSTED_TEXT_TOOLS = frozenset(
+    {"github_list_issues", "github_get_issue", "ci_get_status", "ci_get_job_logs"}
+)
+
 _ISSUES_READ = {"issues": "read", "pull_requests": "read"}
 _ISSUES_WRITE = {"issues": "write", "pull_requests": "write"}
 _CONTENTS_READ = {"contents": "read"}

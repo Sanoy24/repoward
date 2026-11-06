@@ -15,7 +15,7 @@ from repoward.audit import AuditLog, AuditWriteError
 from repoward.canonical import canonical_json, sha256_hex
 from repoward.catalog import TOOL_PERMISSIONS, RiskClass
 from repoward.flow import FlowGuard, FlowStoreError
-from repoward.policy.engine import Decision, Effect, decide
+from repoward.policy.engine import Effect, decide, tighten
 from repoward.policy.loader import CompiledPolicy
 from repoward.principal import Principal
 from repoward.ratelimit import RateLimiter
@@ -88,6 +88,9 @@ class Pipeline:
             "role": principal.role,
             "tool": redact_for_audit(tool),
             "policy_hash": self._policy.sha256,
+            # What labels mean depends on this, so policy replay needs it. None means the guard
+            # was off and no labels were recorded.
+            "flow_trusted": None if self._flow is None else self._flow.trusted_associations,
         }
 
         spec = self._registry.get(tool)
@@ -108,7 +111,7 @@ class Pipeline:
         repo = spec.target(validated).repo
         if mutating and self._flow is not None:
             flow_decision = await self._flow.check_write(principal.id, repo)
-            decision = self._combine(decision, flow_decision)
+            decision = tighten(decision, flow_decision)
             if decision.effect is Effect.DENY:
                 return await self._refuse(context, normalized, decision.rule_id, decision.message)
 
@@ -210,15 +213,6 @@ class Pipeline:
                 warning = "Warning: the action ran but its outcome could not be audited."
                 result.content.append(TextContent(type="text", text=warning))
         return result
-
-    @staticmethod
-    def _combine(decision: Decision, flow: Decision | None) -> Decision:
-        """Apply the flow guard, which can only tighten what policy decided."""
-        if flow is None or flow.effect is Effect.ALLOW or decision.effect is Effect.DENY:
-            return decision
-        if flow.effect is Effect.APPROVAL_REQUIRED and decision.effect is Effect.APPROVAL_REQUIRED:
-            return decision
-        return flow
 
     async def _record_label(self, context: dict[str, Any], kind: str, source: str) -> None:
         try:
