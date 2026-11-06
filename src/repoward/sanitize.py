@@ -182,3 +182,8 @@ def render_output(trusted: str, untrusted: Sequence[UntrustedContent], limit: in
             f'</untrusted-content id="{frame_id}">'
         )
     return "\n\n".join(parts)
+
+
+def display_safe(text: str) -> str:
+    """Make stored text safe to print on an operator's terminal."""
+    return _INVISIBLE.sub("", _ANSI.sub("", text))
