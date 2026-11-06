@@ -3,6 +3,7 @@
 Needs REPOWARD_LIVE_REPO, REPOWARD_LIVE_APP_CLIENT_ID, REPOWARD_LIVE_APP_INSTALLATION_ID and
 GITHUB_APP_PRIVATE_KEY_FILE. The App opens the pull request, so a person can review it. The review
 test also needs REPOWARD_LIVE_REVIEW=1 and a logged-in gh CLI, whose user approves as the human.
+A person should run that test themselves, because it approves a pull request in their name.
 """
 
 import os
@@ -127,7 +128,8 @@ async def test_a_read_token_really_cannot_write(stack: Stack) -> None:
         assert client.get("/contents/README.md").status_code == 200
         denied = client.delete("/git/refs/heads/repoward-no-such-branch-xyz")
         assert denied.status_code == 403
-        assert client.get("/issues").status_code in {403, 404}
+        # An empty comment cannot be created, so this only tests the permission check.
+        assert client.post("/issues/2/comments", json={}).status_code == 403
 
 
 async def test_a_token_is_limited_to_one_repository(stack: Stack) -> None:
@@ -151,6 +153,8 @@ async def test_a_human_review_approves_the_exact_commit(stack: Stack) -> None:
         pytest.skip("REPOWARD_LIVE_REVIEW=1 is required")
     gh = shutil.which("gh")
     assert gh
+    # gh prefers token variables over its login, and the reviewer must be the logged-in person.
+    human_env = {k: v for k, v in os.environ.items() if k not in {"GITHUB_TOKEN", "GH_TOKEN"}}
     branch = f"agent/live-{uuid.uuid4().hex[:10]}"
     number: int | None = None
     token = await stack.raw_token({"contents": "write", "pull_requests": "write"})
@@ -191,6 +195,7 @@ async def test_a_human_review_approves_the_exact_commit(stack: Stack) -> None:
         subprocess.run(  # noqa: S603
             [gh, "pr", "review", str(number), "--approve", "-R", REPO, "-b", "Live test approval."],
             check=True,
+            env=human_env,
         )
 
         # A push after the review must void it, whatever GitHub's own settings do.
@@ -203,6 +208,7 @@ async def test_a_human_review_approves_the_exact_commit(stack: Stack) -> None:
         subprocess.run(  # noqa: S603
             [gh, "pr", "review", str(number), "--approve", "-R", REPO, "-b", "Approved again."],
             check=True,
+            env=human_env,
         )
         merged = await stack.call("github_merge_pull_request", number=number, head_sha=second_sha)
         assert not merged.is_error, text(merged)
