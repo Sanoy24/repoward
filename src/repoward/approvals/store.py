@@ -3,12 +3,13 @@
 import secrets
 import sqlite3
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 
-_BUSY_TIMEOUT_SECONDS = 5.0
+from repoward.storage import transaction
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS approvals (
     id TEXT PRIMARY KEY,
@@ -72,24 +73,8 @@ class ApprovalStore:
         with self._transaction() as connection:
             connection.execute(_SCHEMA)
 
-    @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
-        """Run one write-locked transaction. BEGIN IMMEDIATE makes check-then-update atomic."""
-        connection: sqlite3.Connection | None = None
-        try:
-            connection = sqlite3.connect(
-                self._path, timeout=_BUSY_TIMEOUT_SECONDS, isolation_level=None
-            )
-            connection.execute("BEGIN IMMEDIATE")
-            yield connection
-            connection.execute("COMMIT")
-        except sqlite3.Error as exc:
-            raise ApprovalStoreError(f"approval store failed: {type(exc).__name__}") from exc
-        finally:
-            if connection is not None:
-                if connection.in_transaction:
-                    connection.rollback()
-                connection.close()
+    def _transaction(self) -> AbstractContextManager[sqlite3.Connection]:
+        return transaction(self._path, ApprovalStoreError)
 
     def _expire(self, connection: sqlite3.Connection, now: float) -> None:
         connection.execute(
