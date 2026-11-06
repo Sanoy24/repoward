@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Yonas Mekonnen" }]
+authors = [{ name = "sanoy" }]
 keywords = ["mcp", "model-context-protocol", "ai-agents", "security", "prompt-injection", "github"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -19,13 +19,25 @@ classifiers = [
     "Topic :: Security",
     "Typing :: Typed",
 ]
-dependencies = ["anyio>=4.9", "mcp>=2.3,<3"]
+dependencies = [
+    "anyio>=4.9",
+    "filelock>=3.20,<5",
+    "mcp>=2.3,<3",
+    "pathspec>=1,<2",
+    "pydantic>=2.12,<3",
+    "pyyaml>=6",
+]
 
 [project.scripts]
 repoward = "repoward.cli:main"
 
 [dependency-groups]
-dev = ["mypy>=2.4", "pytest>=9.2", "ruff>=0.17"]
+dev = [
+    "mypy>=2.4",
+    "pytest>=9.2",
+    "ruff>=0.17",
+    "types-pyyaml>=6.0.12.20261103",
+]
 
 [build-system]
 requires = ["hatchling>=1.33"]
