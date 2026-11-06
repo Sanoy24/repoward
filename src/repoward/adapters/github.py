@@ -55,6 +55,8 @@ def raise_for_status(response: httpx.Response) -> None:
         raise ToolError("Not found, or the token cannot access it.")
     if status in {301, 302, 307, 308}:
         raise ToolError("GitHub answered with a redirect, which is not followed.")
+    if status == 409:
+        raise ToolError("GitHub reported a conflict; the branch may have moved.")
     if status == 422:
         raise ToolError("GitHub rejected the request as invalid.")
     raise ToolError(f"GitHub returned an unexpected status ({status}).")
@@ -85,10 +87,27 @@ class GitHubClient:
     async def get_json(
         self, path: str, params: dict[str, Any] | None = None, accept: str = JSON_ACCEPT
     ) -> Any:
-        """GET a JSON document, refusing bodies over the size cap."""
+        """GET a JSON document."""
+        return await self._request("GET", path, params, None, accept)
+
+    async def send_json(self, method: str, path: str, body: dict[str, Any]) -> Any:
+        """Send a change once. Writes are never retried, so a failure is never doubled."""
+        return await self._request(method, path, None, body, JSON_ACCEPT)
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, Any] | None,
+        body: dict[str, Any] | None,
+        accept: str,
+    ) -> Any:
+        """Make one request, refusing response bodies over the size cap."""
         headers = {**self._auth(), "Accept": accept}
         try:
-            async with self._http.stream("GET", path, params=params, headers=headers) as response:
+            async with self._http.stream(
+                method, path, params=params, json=body, headers=headers
+            ) as response:
                 raise_for_status(response)
                 chunks: list[bytes] = []
                 size = 0
