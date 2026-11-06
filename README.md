@@ -2,8 +2,8 @@
 
 A GitHub MCP server that stops AI agents acting on what an attacker's issue told them to do.
 
-> **Status: pre-alpha.** Read and write tools work. Approvals and flow guard are not built yet, so
-> the attack described below is not stopped yet. Do not rely on this project for security.
+> **Status: pre-alpha.** Tools and approvals work. Flow guard is not built yet, so the attack
+> described below is not stopped yet. Do not rely on this project for security.
 
 ## The problem
 
@@ -25,6 +25,9 @@ do not stop the sequence.
   `github_comment`. Writes only reach branches with the configured prefix (`agent/` by default),
   pull requests are draft only by default, commit sizes are limited, nothing is forced or retried,
   and text holding a recognizable credential is refused.
+- **Dangerous tools:** `github_merge_pull_request` and `github_delete_branch` need human approval.
+  An approval covers one exact call at one exact commit, works once and expires. Merging is off
+  until a policy turns it on.
 - **Untrusted content handling:** text from GitHub users comes back wrapped in a tag with a random
   id per response, after invisible characters, hidden HTML comments and images are removed and
   secrets are redacted. This is a mitigation, not a guarantee: a model can still be fooled, which
@@ -34,7 +37,6 @@ do not stop the sequence.
 
 - **Flow guard:** tracks what the agent has read, using facts from GitHub, then blocks
   private-to-public writes and requires approval for writes after untrusted input.
-- **Approvals:** risky actions wait for a human, tied to the exact commit.
 - **Least-privilege tokens:** short-lived GitHub App tokens scoped to each call.
 
 ## Who it is for
@@ -53,7 +55,8 @@ cd repoward
 uv sync
 cp policy.example.yaml policy.yaml  # then edit repos.allow
 uv run repoward validate-policy policy.yaml
-GITHUB_TOKEN=... uv run repoward serve --policy policy.yaml --audit audit.jsonl
+GITHUB_TOKEN=... uv run repoward serve --policy policy.yaml --audit audit.jsonl \
+  --approvals approvals.db
 ```
 
 The server speaks MCP over stdio. Check the log with:
@@ -61,6 +64,24 @@ The server speaks MCP over stdio. Check the log with:
 ```bash
 uv run repoward audit verify audit.jsonl
 ```
+
+## Approving risky actions
+
+A call that needs approval does not run. It returns an `approval_id`, and a person decides from a
+terminal:
+
+```bash
+uv run repoward approvals --db approvals.db list
+uv run repoward approvals --db approvals.db show <id>
+uv run repoward approvals --db approvals.db approve <id> --audit audit.jsonl
+```
+
+The agent then repeats the same call. Pushing new commits changes the commit the call names, so
+the old approval no longer applies, and GitHub refuses a merge whose head has moved.
+
+If the agent runs as the same OS user as this server and has a shell, it could run these commands
+or edit the database itself. Run the server and its files under a separate user or in a container
+for approvals to mean anything.
 
 ## GitHub token
 
@@ -95,6 +116,9 @@ Limits to know about:
 - `github_get_file` refuses symlinks, submodules, binary files and files over 1 MB. It walks the
   Git tree, so each read makes one request per folder in the path.
 - `ci_get_job_logs` fails closed if GitHub moves log storage to a host it does not recognize.
+- `github_merge_pull_request` does not support merge queues or stacked pull requests.
+- `github_delete_branch` checks the commit and then deletes, because GitHub has no conditional
+  delete, so a small window remains between the two.
 
 ## What the audit log proves
 

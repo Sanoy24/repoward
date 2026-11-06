@@ -15,6 +15,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - Read tools for issues, code search, files, CI status and job logs.
 - Framing, invisible-character removal and redaction for text from GitHub users.
 - Write tools for branches, commits, draft pull requests and comments.
+- Approval store, `repoward approvals` commands, and dangerous tools for merging pull requests and
+  deleting branches.
 - Policy rules for the branch prefix, draft-only pull requests and commit limits, and a scan that
   refuses to send recognizable credentials.
 
