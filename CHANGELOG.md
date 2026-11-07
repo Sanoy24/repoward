@@ -5,6 +5,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Added
+
+- HTTP mode: `repoward serve --http` serves several users from one server, each logging in with a JWT
+  from your identity provider. It cannot run without login, and flow guard labels, rate limits and
+  approvals are per user.
+- Policy replay applies edits to `identity_map`, using the groups now recorded in HTTP audit records.
+
 ## [0.3.0] - 2026-11-06
 
 ### Added

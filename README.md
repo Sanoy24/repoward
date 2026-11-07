@@ -69,6 +69,8 @@ What it does not do:
 - **Pull request review as approval (optional):** a merge can be approved by a real GitHub review
   of the exact commit.
 - **Pull request receipts (optional):** a commit status summarizing how the agent's run has gone.
+- **HTTP mode (optional):** serve several users from one server, each logging in with a JWT from your
+  identity provider.
 - **Policy replay:** see which past decisions a policy edit would change before you deploy it.
 - **Untrusted content handling:** text from GitHub users comes back wrapped in a tag with a random
   id per response, after invisible characters, hidden HTML comments and images are removed and
@@ -82,7 +84,7 @@ arguments, so each attempt is logged. Tool code is only ever run from this one p
 
 ```text
 MCP client
-    |  stdio
+    |  stdio, or HTTP with a JWT checked on every request
     v
 repoward
     1. Find the tool and validate its arguments    fail: refused and logged
@@ -108,14 +110,14 @@ can enforce depends on where it runs relative to the agent:
 | --- | --- | --- |
 | The agent has only MCP tools, with no shell or file access | MCP tools | Policy, flow guard, approvals and audit |
 | Same OS user, and the agent has a shell (a typical local coding agent) | Everything the user can reach | **Not a security boundary.** The agent could use `git` or read the token directly, edit the policy, approve its own requests or rewrite the log |
-| The server runs under its own OS user or in a container | Only the MCP server | Policy, flow guard, approvals and audit, as long as the agent cannot read or write the token, policy, databases, audit log or HMAC key |
+| The server runs under its own OS user, in a container, or on another host over HTTP | Only the MCP server | Policy, flow guard, approvals and audit, as long as the agent cannot read or write the token, policy, databases, audit log or HMAC key |
 
 With a shell on the same OS user, repoward only helps an agent that is misled and not trying to get
 around it. GitHub-side controls, such as a ruleset protecting your default branch, are the backstop
 in every case.
 
-It runs over stdio as one identity. There is no HTTP mode or per-user login, so all calls share one
-GitHub identity and one role, which makes it a poor fit for a shared or hosted server for now.
+By default it runs over stdio as one identity. To serve several people from one server, see
+[Serving over HTTP](#serving-over-http).
 
 ## Install
 
@@ -389,6 +391,57 @@ Set `REPOWARD_AUDIT_HMAC_KEY` to use HMAC, and store the output of `repoward aud
 somewhere the server cannot write. Comment bodies, titles, commit messages and file contents are
 logged as a length and hash rather than as text. A crash during a write leaves an incomplete last line, and new
 writes are then refused until an operator repairs the log. Secret redaction is best effort.
+
+## Serving over HTTP
+
+`repoward serve --http` serves several users from one server. It acts as an OAuth resource server:
+your identity provider issues the tokens, and repoward checks one on every request. There is no way
+to run HTTP mode without login. Add this to your policy:
+
+```yaml
+http_auth:
+  issuer: "https://idp.example.com/"
+  audience: "https://mcp.example.com/mcp"
+  jwks_uri: "https://idp.example.com/.well-known/jwks.json"
+  algorithms: [RS256]
+  resource_server_url: "https://mcp.example.com/mcp"
+  allowed_hosts: ["mcp.example.com"]
+
+identity_map:
+  claim: groups
+  mapping:
+    mcp-readers: reader
+    mcp-devs: contributor
+```
+
+```bash
+repoward serve --http --host 127.0.0.1 --port 8000
+```
+
+- **Roles:** each caller needs exactly one role. A token whose groups map to no role, or to more than
+  one, is refused, and roles are never combined. The role comes from the current token on each call,
+  so a changed group applies as soon as a new token is used.
+- **Per user:** flow guard labels, rate limits and approvals all belong to the caller, who is
+  identified by the token's `iss` and `sub`.
+- **Audit log:** records each caller and their groups, so group names end up in the log. Requests with
+  a bad token are refused before any of this and only logged to stderr, so anonymous traffic cannot
+  grow the audit log.
+- **Signing keys:** come only from `jwks_uri`, and only asymmetric algorithms are accepted.
+- **Network:** it listens on `127.0.0.1` by default and refuses other addresses without
+  `allowed_hosts`. It has no TLS of its own, so put it behind a reverse proxy that handles HTTPS and
+  passes the `Host` header through.
+
+Limits:
+
+- **One GitHub identity:** callers' tokens are never sent to GitHub, so all users share the server's
+  GitHub credential, and GitHub's own logs show only that. This server's audit log is the only record
+  of who did what.
+- **One process:** rate limits and legacy sessions live in memory, so run a single instance.
+- **Approvals:** the command line approvals still run on the server's host, so whoever approves needs
+  access there. Review approval works as usual.
+- **Tested with:** locally signed tokens against real HTTP and real GitHub repositories, in both MCP
+  protocol versions. It has not yet been tested with a specific identity provider, so try yours on a
+  test setup first.
 
 ## Pull request receipts
 

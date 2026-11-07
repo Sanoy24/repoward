@@ -54,6 +54,21 @@ flow_guard:
 receipts:
   enabled: false
 
+# Only for repoward serve --http. It cannot run without both of these sections.
+# http_auth:
+#   issuer: "https://idp.example.com/"
+#   audience: "https://mcp.example.com/mcp"
+#   jwks_uri: "https://idp.example.com/.well-known/jwks.json"
+#   algorithms: [RS256]
+#   resource_server_url: "https://mcp.example.com/mcp"
+#   allowed_hosts: ["mcp.example.com"]
+#
+# identity_map:
+#   claim: groups
+#   mapping:
+#     mcp-readers: reader
+#     mcp-devs: contributor
+
 roles:
   reader:
     tools:

@@ -28,6 +28,7 @@ dependencies = [
     "pyjwt[crypto]>=2.10,<3",
     "pydantic>=2.12,<3",
     "pyyaml>=6",
+    "uvicorn>=0.31.1,<1",
 ]
 
 [project.urls]

@@ -22,7 +22,7 @@ from repoward.catalog import UNTRUSTED_TEXT_TOOLS, RiskClass
 from repoward.flow import PRIVATE_READ, TOUCHED_REPO, UNTRUSTED_INPUT, flow_rule
 from repoward.policy.engine import Decision, Effect, Target, decide, tighten
 from repoward.policy.loader import CompiledPolicy
-from repoward.principal import Principal
+from repoward.principal import Principal, resolve_role
 from repoward.ratelimit import RateLimiter
 from repoward.registry import ToolSpec
 from repoward.sanitize import MAX_AUDIT_ITEMS, REDACTED
@@ -32,7 +32,7 @@ UNKNOWN = "unknown"
 _REVIEW = "approvals.github_review"
 _APPROVED = {"approvals.consumed", _REVIEW}
 _REVIEWED = "approval_required (by review)"
-_NOT_POLICY = {"tool.unknown", "input.invalid"}
+_NOT_POLICY = {"tool.unknown", "input.invalid", "identity.none"}
 # Refused because something was unavailable, so the log does not say what policy would have done.
 _OPERATIONAL = {
     "audit.degraded",
@@ -222,11 +222,27 @@ class _Replay:
                 most = replace(most, outbound=(_ASSUMED_CREDENTIAL,))
         return least, most
 
+    def _role(self, record: dict[str, Any]) -> tuple[str | None, str | None]:
+        """The role a caller would have now, and the rule refusing them if any."""
+        groups = record.get("groups")
+        if groups is None:
+            if str(record.get("principal")).startswith("local:"):
+                return self._compiled.policy.stdio.role, None
+            return str(record.get("role")), None
+        if not isinstance(groups, list) or _cut_short(groups):
+            return None, None
+        return resolve_role(self._compiled.policy.identity_map, [str(group) for group in groups])
+
     def _static(self, record: dict[str, Any], spec: ToolSpec) -> _Verdict:
+        role, problem = self._role(record)
+        if problem is not None:
+            return _Verdict(Decision(Effect.DENY, problem))
+        if role is None:
+            return _Verdict(None, "the log shortened or redacted this caller's groups")
         targets = self._targets(record, spec)
         if targets is None:
             return _Verdict(None, "the log shortened or redacted its arguments")
-        principal = Principal(str(record.get("principal")), self._compiled.policy.stdio.role)
+        principal = Principal(str(record.get("principal")), role)
         first, second = (
             decide(self._compiled, principal, spec.name, spec.risk, target) for target in targets
         )
