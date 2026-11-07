@@ -6,12 +6,18 @@ audited. ``MCPServer`` would reject bad arguments before any code here ran.
 """
 
 import os
+from collections.abc import Callable
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
 
 import anyio
+import uvicorn
 from mcp.server import Server, ServerRequestContext
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.stdio import stdio_server
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import (
     CallToolRequestParams,
     CallToolResult,
@@ -19,18 +25,30 @@ from mcp.types import (
     PaginatedRequestParams,
     TextContent,
 )
+from pydantic import AnyHttpUrl
+from starlette.applications import Starlette
 
 from repoward.adapters.github import GitHubClient
 from repoward.adapters.github_auth import AppTokens, load_private_key
 from repoward.approvals.store import ApprovalStore
 from repoward.audit import AuditLog
 from repoward.flow import FlowGuard, FlowStore
+from repoward.http_auth import JwtVerifier, principal_from_request
 from repoward.pipeline import Pipeline, alert
-from repoward.policy.loader import CompiledPolicy
+from repoward.policy.loader import CompiledPolicy, is_loopback
 from repoward.principal import Principal, local_principal
 from repoward.receipts import ReceiptLedger
 from repoward.registry import ToolRegistry
 from repoward.tools import ci_read, github_dangerous, github_read, github_write, system
+
+_LOOPBACK_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+_LOOPBACK_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+_SESSION_ID_CHARS = 128
+PrincipalSource = Principal | Callable[[ServerRequestContext[Any, Any]], Principal]
+
+
+class HttpConfigError(Exception):
+    """HTTP mode cannot start safely with these settings."""
 
 
 def build_registry(policy: CompiledPolicy, github: GitHubClient) -> ToolRegistry:
@@ -53,7 +71,14 @@ def build_github_client(policy: CompiledPolicy) -> GitHubClient:
     return GitHubClient(os.environ.get("GITHUB_TOKEN"))
 
 
-def create_server(registry: ToolRegistry, pipeline: Pipeline, principal: Principal) -> Server:
+def _session_label(ctx: ServerRequestContext[Any, Any]) -> str | None:
+    """A legacy session's id, for the audit log only. Sessions are never authentication."""
+    headers = getattr(ctx.request, "headers", None)
+    session = headers.get("mcp-session-id") if headers is not None else None
+    return session[:_SESSION_ID_CHARS] if isinstance(session, str) else None
+
+
+def create_server(registry: ToolRegistry, pipeline: Pipeline, principal: PrincipalSource) -> Server:
     """Build the MCP server around one pipeline."""
 
     async def list_tools(
@@ -63,7 +88,10 @@ def create_server(registry: ToolRegistry, pipeline: Pipeline, principal: Princip
 
     async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
         try:
-            return await pipeline.call(principal, params.name, params.arguments)
+            caller = principal if isinstance(principal, Principal) else principal(ctx)
+            return await pipeline.call(
+                caller, params.name, params.arguments, session_id=_session_label(ctx)
+            )
         except Exception as exc:
             # A raised exception would reach the model as an unreadable protocol error.
             alert(f"pipeline failed: {type(exc).__name__}")
@@ -80,16 +108,15 @@ def create_server(registry: ToolRegistry, pipeline: Pipeline, principal: Princip
     )
 
 
-def run_stdio(
+def _build_pipeline(
     policy: CompiledPolicy,
+    github: GitHubClient,
+    registry: ToolRegistry,
     audit_path: Path,
     approvals_path: Path,
     flow_path: Path,
     hmac_key: bytes | None,
-) -> None:
-    """Serve over stdio until the client closes the connection."""
-    github = build_github_client(policy)
-    registry = build_registry(policy, github)
+) -> Pipeline:
     approval_rules = policy.policy.approvals
     approvals = ApprovalStore(
         approvals_path,
@@ -103,7 +130,7 @@ def run_stdio(
         if policy.policy.receipts.enabled
         else None
     )
-    pipeline = Pipeline(
+    return Pipeline(
         policy,
         registry,
         AuditLog(audit_path, hmac_key),
@@ -111,12 +138,102 @@ def run_stdio(
         flow=flow,
         receipts=receipts,
     )
+
+
+def run_stdio(
+    policy: CompiledPolicy,
+    audit_path: Path,
+    approvals_path: Path,
+    flow_path: Path,
+    hmac_key: bytes | None,
+) -> None:
+    """Serve over stdio until the client closes the connection."""
+    github = build_github_client(policy)
+    registry = build_registry(policy, github)
+    pipeline = _build_pipeline(
+        policy, github, registry, audit_path, approvals_path, flow_path, hmac_key
+    )
     server = create_server(registry, pipeline, local_principal(policy.policy.stdio.role))
 
     async def serve() -> None:
         try:
             async with stdio_server() as (read_stream, write_stream):
                 await server.run(read_stream, write_stream, server.create_initialization_options())
+        finally:
+            await github.aclose()
+
+    anyio.run(serve)
+
+
+def _transport_security(policy: CompiledPolicy, host: str) -> TransportSecuritySettings:
+    """Set rebinding protection explicitly. The SDK turns it off for a non-loopback bind."""
+    auth = policy.policy.http_auth
+    assert auth is not None  # noqa: S101
+    loopback = is_loopback(host)
+    if not auth.allowed_hosts and not loopback:
+        raise HttpConfigError(
+            f"binding to {host} needs http_auth.allowed_hosts, which protects against DNS rebinding"
+        )
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(auth.allowed_hosts) or _LOOPBACK_HOSTS,
+        allowed_origins=list(auth.allowed_origins) or (_LOOPBACK_ORIGINS if loopback else []),
+    )
+
+
+def build_http_app(
+    policy: CompiledPolicy,
+    registry: ToolRegistry,
+    pipeline: Pipeline,
+    host: str,
+    verifier: JwtVerifier | None = None,
+) -> Starlette:
+    """The ASGI app for HTTP mode. Raises HttpConfigError if it would not be safe to serve."""
+    auth = policy.policy.http_auth
+    identity = policy.policy.identity_map
+    if auth is None or identity is None:
+        raise HttpConfigError("HTTP mode needs http_auth and identity_map in the policy")
+    security = _transport_security(policy, host)
+    server = create_server(
+        registry, pipeline, lambda ctx: principal_from_request(ctx.request, policy)
+    )
+    return server.streamable_http_app(
+        streamable_http_path=urlsplit(auth.resource_server_url).path or "/mcp",
+        transport_security=security,
+        host=host,
+        auth=AuthSettings(
+            issuer_url=AnyHttpUrl(auth.issuer),
+            resource_server_url=AnyHttpUrl(auth.resource_server_url),
+            # The verifier checks the audience itself, as identity providers name them differently.
+            validate_token_resource=False,
+        ),
+        token_verifier=verifier or JwtVerifier(auth, identity.claim),
+    )
+
+
+def run_http(
+    policy: CompiledPolicy,
+    audit_path: Path,
+    approvals_path: Path,
+    flow_path: Path,
+    hmac_key: bytes | None,
+    host: str,
+    port: int,
+) -> None:
+    """Serve over HTTP with one worker, because rate limits and legacy sessions live in memory."""
+    github = build_github_client(policy)
+    registry = build_registry(policy, github)
+    pipeline = _build_pipeline(
+        policy, github, registry, audit_path, approvals_path, flow_path, hmac_key
+    )
+    app = build_http_app(policy, registry, pipeline, host)
+    config = uvicorn.Config(
+        app, host=host, port=port, log_level="warning", server_header=False, access_log=False
+    )
+
+    async def serve() -> None:
+        try:
+            await uvicorn.Server(config).serve()
         finally:
             await github.aclose()
 

@@ -21,6 +21,8 @@ another MCP server.
 | Prompt injection through GitHub text | Writes after untrusted input need approval. Text is framed with a random id per response, and invisible characters, hidden HTML comments and images are removed. Rules are enforced outside the model | A model can still be fooled, and framing is not a guarantee. Misuse within the role at the same visibility is possible. Repository files and search results do not count as untrusted input |
 | Reading a denied file through a symlink | The file tool walks the Git tree, checks real modes and fetches blobs by SHA. It does not use the contents API, which follows such links | None known |
 | Search widening beyond the allowed repository | Qualifiers and operators are refused, and every result is filtered by repository and path | None known |
+| Forged or misused JWT (HTTP mode) | Asymmetric algorithm allowlist, required `exp`, `iss`, `aud` and `sub`, keys only from the configured `jwks_uri`, refetches throttled, no token passthrough | A compromised identity provider, or anyone able to change a user's groups there |
+| DNS rebinding (HTTP mode) | `Host` and `Origin` allowlists, loopback by default, and no start on another address without an allowlist | A misconfigured reverse proxy |
 | Over-broad permissions | Default deny, roles, limits, branch prefix, draft-only pull requests, and a separate switch for dangerous tools. In GitHub App mode, GitHub itself enforces each tool's permissions, and a token wider than requested is refused | `Contents: write` lets the token itself push to any branch and merge. Protect your default branch with a ruleset that has no bypass for the token's owner |
 | Workflow tampering | `.github/**` is denied by the starter policy, and the token needs no Workflows permission, so GitHub refuses too | Other code that a workflow runs, such as scripts it calls |
 | Agent approves its own action or edits policy | Approval happens outside MCP, on the command line or through a GitHub review by a separate identity, and no tool can approve or reset | Command-line approval is unprotected if the agent has a shell as the same OS user. Review approval is lost if the agent can reach the reviewer's GitHub credentials |
@@ -38,8 +40,9 @@ another MCP server.
 
 - Compromise of the machine running the server, or of GitHub.
 - A compromised trusted account: `author_association` reflects the account, not its intent.
-- Teams and remote use: there is no HTTP mode or per-user login yet, and all calls share one GitHub
-  identity. This server's audit log is then the only per-user record, and today there is one user.
+- HTTP mode: all users share one GitHub identity, so this server's audit log is the only per-user
+  record. It has not yet been tested against a specific identity provider, and it relies on a reverse
+  proxy for TLS.
 - Receipts are informational. Anyone with `Commit statuses: write` can post the same status, so one
   does not prove a change came through this server. On a public repository, anyone can read its
   counts and whether flow labels are set.

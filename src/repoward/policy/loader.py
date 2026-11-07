@@ -1,8 +1,10 @@
 """Strict policy loading. Every problem is reported with its line number."""
 
+import ipaddress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import pathspec
 import yaml
@@ -142,6 +144,42 @@ def _resolve_roles(policy: Policy, problems: list[tuple[str, _Loc]]) -> dict[str
     return resolved
 
 
+def is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_secure_url(url: str) -> bool:
+    """HTTPS, or plain HTTP on this machine for local development."""
+    parts = urlsplit(url)
+    if not parts.hostname:
+        return False
+    return parts.scheme == "https" or (parts.scheme == "http" and is_loopback(parts.hostname))
+
+
+def _http_problems(policy: Policy) -> list[tuple[str, _Loc]]:
+    problems: list[tuple[str, _Loc]] = []
+    auth = policy.http_auth
+    identity = policy.identity_map
+    if (auth is None) != (identity is None):
+        problems.append(("http_auth and identity_map must be set together", ("http_auth",)))
+    if auth is not None:
+        for field in ("jwks_uri", "resource_server_url"):
+            if not _is_secure_url(getattr(auth, field)):
+                problems.append((f"{field} must use https", ("http_auth", field)))
+    if identity is not None:
+        for group, role in identity.mapping.items():
+            if role not in policy.roles:
+                problems.append(
+                    (f"role '{role}' is not defined", ("identity_map", "mapping", group))
+                )
+    return problems
+
+
 def _semantic_problems(policy: Policy, resolved: dict[str, ResolvedRole]) -> list[tuple[str, _Loc]]:
     problems: list[tuple[str, _Loc]] = []
     for name, role in policy.roles.items():
@@ -181,6 +219,7 @@ def _semantic_problems(policy: Policy, resolved: dict[str, ResolvedRole]) -> lis
     for tool in policy.rate_limits:
         if tool != "default" and tool not in TOOL_CATALOG:
             problems.append((f"unknown tool '{tool}'", ("rate_limits", tool)))
+    problems += _http_problems(policy)
     if policy.stdio.role not in policy.roles:
         problems.append((f"stdio role '{policy.stdio.role}' is not defined", ("stdio", "role")))
     for index, pattern in enumerate(policy.paths.deny):

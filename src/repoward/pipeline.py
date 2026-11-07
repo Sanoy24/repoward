@@ -95,13 +95,22 @@ class Pipeline:
             "instance_id": self._instance_id,
             "session_id": session_id,
             "principal": principal.id,
-            "role": principal.role,
+            "role": principal.role or None,
             "tool": redact_for_audit(tool),
             "policy_hash": self._policy.sha256,
             # What labels mean depends on this, so policy replay needs it. None means the guard
             # was off and no labels were recorded.
             "flow_trusted": None if self._flow is None else self._flow.trusted_associations,
         }
+        if principal.groups is not None:
+            context["groups"] = redact_for_audit(list(principal.groups))
+        if principal.identity_problem is not None:
+            return await self._refuse(
+                context,
+                args,
+                principal.identity_problem,
+                "Your identity does not map to exactly one role here. Ask an administrator.",
+            )
 
         spec = self._registry.get(tool)
         if spec is None:

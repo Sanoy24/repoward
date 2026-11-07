@@ -82,6 +82,26 @@ class ReceiptRules(_Strict):
     enabled: bool = False
 
 
+class HttpAuth(_Strict):
+    """How HTTP mode verifies callers. Holds addresses and names only, never a secret."""
+
+    issuer: str = Field(min_length=1)
+    audience: str = Field(min_length=1)
+    jwks_uri: str
+    algorithms: list[
+        Literal["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA"]
+    ] = Field(min_length=1)
+    resource_server_url: str
+    leeway_seconds: int = Field(default=30, ge=0, le=60)
+    allowed_hosts: list[str] = Field(default_factory=list)
+    allowed_origins: list[str] = Field(default_factory=list)
+
+
+class IdentityMap(_Strict):
+    claim: str = Field(default="groups", min_length=1)
+    mapping: dict[str, str] = Field(min_length=1)
+
+
 class DangerousTool(_Strict):
     enabled: bool
 
@@ -116,3 +136,5 @@ class Policy(_Strict):
     roles: dict[str, Role]
     rate_limits: dict[str, RateLimit]
     stdio: StdioConfig = Field(default_factory=StdioConfig)
+    http_auth: HttpAuth | None = None
+    identity_map: IdentityMap | None = None

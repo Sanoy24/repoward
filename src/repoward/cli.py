@@ -24,7 +24,7 @@ from repoward.flow import FlowStore, FlowStoreError
 from repoward.policy.loader import PolicyError, load_policy
 from repoward.policy.replay import ReplayError, ReplayReport, Row, replay_log
 from repoward.sanitize import display_safe
-from repoward.server import run_stdio
+from repoward.server import HttpConfigError, run_http, run_stdio
 from repoward.setup import (
     APPROVALS_FILE,
     AUDIT_FILE,
@@ -99,11 +99,14 @@ def _serve(args: argparse.Namespace) -> int:
     try:
         for path in (audit, approvals, flow):
             path.parent.mkdir(parents=True, exist_ok=True)
-        run_stdio(compiled, audit, approvals, flow, key)
+        if args.http:
+            run_http(compiled, audit, approvals, flow, key, args.host, args.port)
+        else:
+            run_stdio(compiled, audit, approvals, flow, key)
     except OSError as exc:
         _error(f"cannot create repoward's files: {exc.strerror}")
         return 1
-    except (ApprovalStoreError, FlowStoreError, AppConfigError) as exc:
+    except (ApprovalStoreError, FlowStoreError, AppConfigError, HttpConfigError) as exc:
         _error(str(exc))
         return 1
     return 0
@@ -355,7 +358,10 @@ def _build_parser() -> argparse.ArgumentParser:
     init.add_argument("--dir", type=Path, help="directory for repoward's files")
     init.set_defaults(run=_init)
 
-    serve = commands.add_parser("serve", help="serve MCP over stdio")
+    serve = commands.add_parser("serve", help="serve MCP over stdio, or HTTP with --http")
+    serve.add_argument("--http", action="store_true", help="serve over HTTP, with JWT login")
+    serve.add_argument("--host", default="127.0.0.1", help="address for --http")
+    serve.add_argument("--port", type=int, default=8000, help="port for --http")
     serve.add_argument("--dir", type=Path, help="directory for repoward's files")
     serve.add_argument("--policy", type=Path, help="policy YAML file")
     serve.add_argument("--audit", type=Path, help="audit JSONL file")
