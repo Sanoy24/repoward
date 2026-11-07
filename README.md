@@ -75,11 +75,47 @@ What it does not do:
   secrets are redacted. This is a mitigation, not a guarantee: a model can still be fooled, which
   is why the rules above are enforced outside the model.
 
+## How it works
+
+Every tool call takes the same path, including calls to unknown tools and calls with invalid
+arguments, so each attempt is logged. Tool code is only ever run from this one place.
+
+```text
+MCP client
+    |  stdio
+    v
+repoward
+    1. Find the tool and validate its arguments    fail: refused and logged
+    2. Check the policy                            default deny
+    3. Check the flow guard                        for writes
+    4. Check the rate limit
+    5. Check for human approval                    if policy or the flow guard asks for it
+    6. Log the decision                            if this fails, a write does not happen
+    7. Run the tool
+    8. Clean, redact, limit and label the output
+    9. Log the outcome
+    |
+    v
+GitHub API
+```
+
 ## Who it is for
 
-Agents whose only route to GitHub is this server, such as CI bots and hosted agents. An agent with
-shell access can run `git` or read local credentials directly, so this server is not a security
-boundary for it.
+Agents whose only route to GitHub is this server, such as CI bots and hosted agents. What repoward
+can enforce depends on where it runs relative to the agent:
+
+| Deployment | The agent can reach | What holds |
+| --- | --- | --- |
+| The agent has only MCP tools, with no shell or file access | MCP tools | Policy, flow guard, approvals and audit |
+| Same OS user, and the agent has a shell (a typical local coding agent) | Everything the user can reach | **Not a security boundary.** The agent could use `git` or read the token directly, edit the policy, approve its own requests or rewrite the log |
+| The server runs under its own OS user or in a container | Only the MCP server | Policy, flow guard, approvals and audit, as long as the agent cannot read or write the token, policy, databases, audit log or HMAC key |
+
+With a shell on the same OS user, repoward only helps an agent that is misled and not trying to get
+around it. GitHub-side controls, such as a ruleset protecting your default branch, are the backstop
+in every case.
+
+It runs over stdio as one identity. There is no HTTP mode or per-user login, so all calls share one
+GitHub identity and one role, which makes it a poor fit for a shared or hosted server for now.
 
 ## Install
 
