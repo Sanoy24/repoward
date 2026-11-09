@@ -41,7 +41,7 @@ another MCP server.
 - Compromise of the machine running the server, or of GitHub.
 - A compromised trusted account: `author_association` reflects the account, not its intent.
 - HTTP mode: all users share one GitHub identity, so this server's audit log is the only per-user
-  record. It has not yet been tested against a specific identity provider, and it relies on a reverse
+  record. It has been tested with Keycloak but no other identity provider, and it relies on a reverse
   proxy for TLS.
 - Receipts are informational. Anyone with `Commit statuses: write` can post the same status, so one
   does not prove a change came through this server. On a public repository, anyone can read its
