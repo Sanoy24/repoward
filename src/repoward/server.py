@@ -28,6 +28,7 @@ from mcp.types import (
 from pydantic import AnyHttpUrl
 from starlette.applications import Starlette
 
+from repoward.adapters import keychain
 from repoward.adapters.github import GitHubClient
 from repoward.adapters.github_auth import AppTokens, load_private_key
 from repoward.approvals.store import ApprovalStore
@@ -68,7 +69,19 @@ def build_github_client(policy: CompiledPolicy) -> GitHubClient:
         assert auth.client_id is not None  # noqa: S101
         assert auth.installation_id is not None  # noqa: S101
         return GitHubClient(AppTokens(auth.client_id, auth.installation_id, load_private_key()))
-    return GitHubClient(os.environ.get("GITHUB_TOKEN"))
+    return GitHubClient(personal_token())
+
+
+def personal_token() -> str | None:
+    """GITHUB_TOKEN if set, otherwise the token stored with repoward token set."""
+    token = os.environ.get("GITHUB_TOKEN")
+    if token or not keychain.available():
+        return token or None
+    try:
+        return keychain.get_token()
+    except keychain.KeychainError as exc:
+        alert(str(exc))
+        return None
 
 
 def _session_label(ctx: ServerRequestContext[Any, Any]) -> str | None:

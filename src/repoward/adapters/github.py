@@ -80,7 +80,7 @@ class StaticToken:
 
     async def token(self, scope: CallScope | None, http: httpx.AsyncClient) -> str:
         if not self._token:
-            raise ToolError("GITHUB_TOKEN is not set on the server.")
+            raise ToolError("No GitHub token is set on the server.")
         return self._token
 
     async def identity(self, http: httpx.AsyncClient) -> str:

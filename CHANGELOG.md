@@ -9,6 +9,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 - Audit log rotation: set `audit.rotate_mb` to start a new file at that size. Archives keep one
   unbroken chain, and `audit verify` and `policy replay` read them together. Off by default.
+- `repoward token set`, `status` and `delete` keep the GitHub token in the OS keychain, through the
+  optional `keyring` extra. `GITHUB_TOKEN` still takes precedence.
 
 ## [0.4.0] - 2026-11-09
 

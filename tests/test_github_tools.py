@@ -575,7 +575,7 @@ async def test_missing_token_is_explained(read_policy: CompiledPolicy, tmp_path:
         read_policy, build_registry(read_policy, github), AuditLog(tmp_path / "a.jsonl")
     )
     result = await call(pipeline, "github_list_issues", repo=REPO)
-    assert "GITHUB_TOKEN is not set" in text(result)
+    assert "No GitHub token is set" in text(result)
     await github.aclose()
 
 
