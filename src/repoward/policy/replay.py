@@ -6,7 +6,6 @@ possibility is tried: if they agree that is the answer, and if not the answer is
 """
 
 import itertools
-import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
@@ -17,7 +16,7 @@ from typing import Any, cast
 from pydantic import ValidationError
 
 from repoward.adapters.github import GitHubClient
-from repoward.audit import verify_log
+from repoward.audit import log_files, read_records, verify_log
 from repoward.catalog import UNTRUSTED_TEXT_TOOLS, RiskClass
 from repoward.flow import PRIVATE_READ, TOUCHED_REPO, UNTRUSTED_INPUT, flow_rule
 from repoward.policy.engine import Decision, Effect, Target, decide, tighten
@@ -123,13 +122,13 @@ def _content_characters(args: dict[str, Any]) -> int | None:
 
 def _load(path: Path, key: bytes | None) -> list[dict[str, Any]]:
     """Read a log only after its chain verifies. A tampered log gives meaningless answers."""
-    if not path.exists():
+    if not log_files(path):
         raise ReplayError(f"no audit log at {path}")
     report = verify_log(path, key)
     if not report.ok:
         raise ReplayError("the audit log failed verification: " + "; ".join(report.errors))
     try:
-        return [json.loads(line) for line in path.read_bytes().splitlines() if line.strip()]
+        return read_records(path)
     except (OSError, ValueError) as exc:
         raise ReplayError(f"cannot read the audit log: {exc}") from exc
 

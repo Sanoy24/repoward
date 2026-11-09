@@ -130,10 +130,11 @@ def _build_pipeline(
         if policy.policy.receipts.enabled
         else None
     )
+    rotate_mb = policy.policy.audit.rotate_mb
     return Pipeline(
         policy,
         registry,
-        AuditLog(audit_path, hmac_key),
+        AuditLog(audit_path, hmac_key, None if rotate_mb is None else rotate_mb * 1_000_000),
         approvals=approvals,
         flow=flow,
         receipts=receipts,

@@ -3,12 +3,16 @@
 The chain is tamper-evident, not tamper-proof. Anyone who can write the file can recompute a
 plain SHA-256 chain, and no chain alone reveals deleted newest records. An HMAC key the
 attacker cannot read covers the first case; off-host checkpoints cover the second.
+
+With rotation on, a full log is renamed to an archive named by its sequence range, and the next
+record continues the same chain. Verification walks the archives and the current file as one chain.
 """
 
 import hashlib
 import hmac
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -82,12 +86,57 @@ def _read_tail(path: Path) -> dict[str, Any] | None:
     return record
 
 
+def _archive_pattern(path: Path) -> re.Pattern[str]:
+    return re.compile(rf"^{re.escape(path.stem)}\.(\d{{12}})-(\d{{12}}){re.escape(path.suffix)}$")
+
+
+def log_files(path: Path) -> list[Path]:
+    """A log's archives, oldest first, then the current file if it exists."""
+    pattern = _archive_pattern(path)
+    archives: list[tuple[int, Path]] = []
+    if path.parent.is_dir():
+        for candidate in path.parent.iterdir():
+            match = pattern.match(candidate.name)
+            if match and candidate.is_file():
+                archives.append((int(match[1]), candidate))
+    files = [candidate for _, candidate in sorted(archives)]
+    return [*files, path] if path.exists() else files
+
+
+def _read_head_seq(path: Path) -> int:
+    with path.open("rb") as handle:
+        first = json.loads(handle.readline())
+    return int(first["seq"])
+
+
 class AuditLog:
-    def __init__(self, path: Path, hmac_key: bytes | None = None) -> None:
+    def __init__(
+        self, path: Path, hmac_key: bytes | None = None, rotate_bytes: int | None = None
+    ) -> None:
         self._path = path
         self._key = hmac_key
         self._alg = _ALG_SHA256 if hmac_key is None else _ALG_HMAC
+        self._rotate_bytes = rotate_bytes
         self._lock = FileLock(f"{path}.lock", timeout=_LOCK_TIMEOUT_SECONDS)
+
+    def _chain_tail(self) -> dict[str, Any] | None:
+        """The newest record, which is in the newest archive just after a rotation."""
+        tail = _read_tail(self._path)
+        if tail is not None:
+            return tail
+        files = log_files(self._path)
+        return _read_tail(files[-1]) if files and files[-1] != self._path else None
+
+    def _rotate_if_full(self, tail: dict[str, Any] | None) -> None:
+        if self._rotate_bytes is None or tail is None or not self._path.exists():
+            return
+        if self._path.stat().st_size < self._rotate_bytes:
+            return
+        first = _read_head_seq(self._path)
+        archive = self._path.with_name(
+            f"{self._path.stem}.{first:012d}-{int(tail['seq']):012d}{self._path.suffix}"
+        )
+        os.replace(self._path, archive)
 
     def append(self, fields: dict[str, Any]) -> dict[str, Any]:
         """Durably append one record, chained to whatever is on disk now.
@@ -96,11 +145,12 @@ class AuditLog:
         """
         try:
             with self._lock:
-                tail = _read_tail(self._path)
+                tail = self._chain_tail()
                 if tail is not None and tail.get("alg") != self._alg:
                     raise AuditWriteError(
                         "the audit log uses a different hash mode; start a new log to change it"
                     )
+                self._rotate_if_full(tail)
                 record: dict[str, Any] = {
                     **fields,
                     "schema_version": SCHEMA_VERSION,
@@ -148,14 +198,14 @@ def _load_anchors(path: Path, report: VerifyReport) -> list[dict[str, Any]]:
     return anchors
 
 
-def _record_error(record: Any, raw: bytes, key: bytes | None, prev: str, number: int) -> str | None:
+def _record_error(record: Any, raw: bytes, key: bytes | None, prev: str, seq: int) -> str | None:
     """Return why a parsed line breaks the chain, or None if it is sound."""
     if not isinstance(record, dict) or canonical_json(record) != raw:
         return "record is not in canonical form"
     expected_alg = _ALG_SHA256 if key is None else _ALG_HMAC
     if record.get("alg") != expected_alg:
         return f"hash mode is {record.get('alg')!r}, expected {expected_alg!r}"
-    if record.get("seq") != number:
+    if record.get("seq") != seq:
         return "sequence number is wrong"
     if record.get("prev_hash") != prev:
         return "does not chain to the previous record"
@@ -165,45 +215,86 @@ def _record_error(record: Any, raw: bytes, key: bytes | None, prev: str, number:
     return None
 
 
+def _check_name(path: Path, current: Path, first: int, last: int) -> str | None:
+    """An archive's name must match the records inside it."""
+    if path == current:
+        return None
+    expected = f"{current.stem}.{first:012d}-{last:012d}{current.suffix}"
+    return None if path.name == expected else f"{path.name}: name does not match its records"
+
+
 def verify_log(
     path: Path, hmac_key: bytes | None = None, anchor_path: Path | None = None
 ) -> VerifyReport:
-    """Check the whole chain, stopping at the first break."""
+    """Check the whole chain across archives and the current file, stopping at the first break."""
     report = VerifyReport()
-    try:
-        raw_lines = path.read_bytes().split(b"\n")
-    except OSError as exc:
-        report.errors.append(f"cannot read audit log: {exc.strerror}")
-        return report
-    if raw_lines[-1] != b"":
-        report.errors.append(f"line {len(raw_lines)}: incomplete final record")
+    files = log_files(path)
+    if not files:
+        report.errors.append("cannot read audit log: no such file")
         return report
 
     seen_hashes: dict[int, str] = {}
     open_calls: dict[str, int] = {}
     previous = GENESIS_HASH
-    for number, raw in enumerate(raw_lines[:-1], start=1):
+    expected_seq: int | None = None
+    several = len(files) > 1
+    for file in files:
+        where = f"{file.name} " if several else ""
         try:
-            record = json.loads(raw)
-            problem = _record_error(record, raw, hmac_key, previous, number)
-        except (ValueError, TypeError):
-            problem = "not valid JSON"
-        if problem is not None:
-            report.errors.append(f"line {number}: {problem}")
+            raw_lines = file.read_bytes().split(b"\n")
+        except OSError as exc:
+            report.errors.append(f"cannot read audit log: {exc.strerror}")
             return report
-        previous = record["hash"]
-        seen_hashes[number] = previous
-        report.records = report.tip_seq = number
-        report.tip_hash = previous
-        request_id = str(record.get("request_id"))
-        if record.get("event") == "tool_call_decision" and record.get("decision") == "allow":
-            open_calls[request_id] = number
-        elif record.get("event") == "tool_call_outcome":
-            open_calls.pop(request_id, None)
+        if raw_lines[-1] != b"":
+            report.errors.append(f"{where}line {len(raw_lines)}: incomplete final record")
+            return report
+        first_in_file: int | None = None
+        for number, raw in enumerate(raw_lines[:-1], start=1):
+            seq = 0
+            try:
+                record = json.loads(raw)
+                if expected_seq is None:
+                    # The oldest file left. Archives before it may have been removed on purpose.
+                    expected_seq = int(record["seq"])
+                    previous = str(record["prev_hash"])
+                    if expected_seq != 1:
+                        report.warnings.append(
+                            f"the log starts at seq {expected_seq}; earlier archives are missing, "
+                            "so only an anchor can show they were not changed"
+                        )
+                seq = expected_seq
+                problem = _record_error(record, raw, hmac_key, previous, seq)
+            except (ValueError, TypeError, KeyError):
+                problem = "not valid JSON"
+            if problem is not None:
+                report.errors.append(f"{where}line {number}: {problem}")
+                return report
+            if first_in_file is None:
+                first_in_file = seq
+            previous = record["hash"]
+            seen_hashes[seq] = previous
+            report.records += 1
+            report.tip_seq = seq
+            report.tip_hash = previous
+            expected_seq = seq + 1
+            request_id = str(record.get("request_id"))
+            if record.get("event") == "tool_call_decision" and record.get("decision") == "allow":
+                open_calls[request_id] = report.tip_seq
+            elif record.get("event") == "tool_call_outcome":
+                open_calls.pop(request_id, None)
+        if first_in_file is None:
+            if file != path:
+                report.errors.append(f"{file.name}: archive is empty")
+                return report
+            continue
+        name_problem = _check_name(file, path, first_in_file, report.tip_seq)
+        if name_problem is not None:
+            report.errors.append(name_problem)
+            return report
 
-    for request_id, number in open_calls.items():
+    for request_id, seq in open_calls.items():
         report.warnings.append(
-            f"line {number}: allowed call {request_id} has no outcome; its result is unknown"
+            f"seq {seq}: allowed call {request_id} has no outcome; its result is unknown"
         )
     if anchor_path is None:
         report.warnings.append("no anchor file given, so deleted newest records go undetected")
@@ -215,6 +306,14 @@ def verify_log(
             elif seen_hashes[seq] != anchor["hash"]:
                 report.errors.append(f"anchor at seq {seq}: hash does not match")
     return report
+
+
+def read_records(path: Path) -> list[dict[str, Any]]:
+    """Every record across archives and the current file. Verify first."""
+    records: list[dict[str, Any]] = []
+    for file in log_files(path):
+        records += [json.loads(line) for line in file.read_bytes().splitlines() if line.strip()]
+    return records
 
 
 def write_checkpoint(path: Path, out: Path, hmac_key: bytes | None = None) -> VerifyReport:
