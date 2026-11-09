@@ -43,9 +43,10 @@ another MCP server.
 - HTTP mode: all users share one GitHub identity, so this server's audit log is the only per-user
   record. It has been tested with Keycloak but no other identity provider, and it relies on a reverse
   proxy for TLS.
-- Receipts are informational. Anyone with `Commit statuses: write` can post the same status, so one
-  does not prove a change came through this server. On a public repository, anyone can read its
-  counts and whether flow labels are set.
+- A receipt alone is informational, because anyone with `Commit statuses: write` can post the same
+  status. A ruleset that requires it from the App specifically does hold, which was tested live. It
+  then shows the head commit was made by this server or by a holder of the App's private key. On a
+  public repository, anyone can read its counts and whether flow labels are set.
 - Review approval trusts GitHub's `commit_id` and permission answers at the moment of the check.
 - Independent review. Flow guard's untrusted-author rule is tested using real `author_association`
   values from GitHub, with a policy that marks the author's association as untrusted.

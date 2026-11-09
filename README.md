@@ -491,11 +491,33 @@ or needed approval, and whether anything restricts the agent's writes. `flow lab
   carry it.
 - A receipt is audited before it is posted. If posting fails, the agent's commit or pull request still
   succeeds, and the failure is logged.
-- **A receipt does not prove a change came through repoward.** Anyone with that permission can post
-  the same status, so don't make it a required check.
+- **On its own, a receipt does not prove a change came through repoward.** Anyone with that
+  permission can post a status with the same name. See below for making it count.
 - **Anyone who can see the repository can read it.** On a public repository, that includes how many
   calls were refused and whether flow labels are set, which can hint that the agent read private
   content.
+
+### Requiring a receipt
+
+In GitHub App mode, a branch ruleset can require `repoward/receipt` **from your App
+specifically**. GitHub then ignores the same status posted by anyone else. In a live test, a
+receipt posted by a person left the pull request blocked, even though GitHub's combined status
+showed success, and the App's receipt unblocked it.
+
+To set it up, add a **Require status checks to pass** rule with the check `repoward/receipt`, and
+choose your App as its source. Through the API, that is
+`{"context": "repoward/receipt", "integration_id": <your App's ID>}`.
+
+What that proves, and what it does not:
+
+- The newest commit was made by repoward, or by someone else holding your App's private key. A
+  commit pushed some other way has no receipt from the App, so it blocks the merge until repoward
+  commits again.
+- It does not judge the change. A receipt is always posted as success, whatever it counts.
+- It applies to every pull request into that branch, including people's own. Target only the
+  branches agents merge into, or let maintainers bypass the rule.
+- With a personal token, the receipt is posted as you, so requiring it proves nothing. This only
+  works in App mode.
 
 ## Trying a policy change
 
