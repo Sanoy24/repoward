@@ -102,6 +102,11 @@ class IdentityMap(_Strict):
     mapping: dict[str, str] = Field(min_length=1)
 
 
+class AuditRules(_Strict):
+    # Start a new file once the current one reaches this size. Off unless set.
+    rotate_mb: int | None = Field(default=None, gt=0, le=100_000)
+
+
 class DangerousTool(_Strict):
     enabled: bool
 
@@ -133,6 +138,7 @@ class Policy(_Strict):
     approvals: ApprovalRules = Field(default_factory=ApprovalRules)
     flow_guard: FlowGuardRules = Field(default_factory=FlowGuardRules)
     receipts: ReceiptRules = Field(default_factory=ReceiptRules)
+    audit: AuditRules = Field(default_factory=AuditRules)
     roles: dict[str, Role]
     rate_limits: dict[str, RateLimit]
     stdio: StdioConfig = Field(default_factory=StdioConfig)

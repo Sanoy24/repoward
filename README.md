@@ -507,6 +507,24 @@ guess.
 Replay assumes the agent would have made the same calls. A real agent that was refused would have
 done something else, so treat the report as a guide to the policy's effect and not as a prediction.
 
+### Rotating the log
+
+The log grows forever unless you set a size limit in your policy:
+
+```yaml
+audit:
+  rotate_mb: 50
+```
+
+When the file reaches that size, it is renamed to an archive such as
+`audit.000000000001-000000004200.jsonl`, named by the records it holds, and a new file continues the
+same chain. `repoward audit verify` and `repoward policy replay` read the archives and the current
+file together, so editing, renaming or removing an archive in the middle is detected.
+
+You can delete or move the oldest archives to save space. Verification then warns that the log no
+longer reaches its start, and any checkpoint pointing into a removed archive fails, so prune old
+anchors at the same time. Keep the archives you remove somewhere safe if you may need them.
+
 ## Contributing and security
 
 See [CONTRIBUTING.md](https://github.com/Sanoy24/repoward/blob/main/CONTRIBUTING.md). Please report vulnerabilities as described in

@@ -69,6 +69,10 @@ receipts:
 #     mcp-readers: reader
 #     mcp-devs: contributor
 
+# Start a new audit file at this size. The chain continues across files. Off unless set.
+# audit:
+#   rotate_mb: 50
+
 roles:
   reader:
     tools:

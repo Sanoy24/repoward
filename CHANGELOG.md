@@ -5,6 +5,11 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Added
+
+- Audit log rotation: set `audit.rotate_mb` to start a new file at that size. Archives keep one
+  unbroken chain, and `audit verify` and `policy replay` read them together. Off by default.
+
 ## [0.4.0] - 2026-11-09
 
 ### Added
