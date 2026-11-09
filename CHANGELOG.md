@@ -5,12 +5,20 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-09
+
 ### Added
 
 - HTTP mode: `repoward serve --http` serves several users from one server, each logging in with a JWT
   from your identity provider. It cannot run without login, and flow guard labels, rate limits and
   approvals are per user.
 - Policy replay applies edits to `identity_map`, using the groups now recorded in HTTP audit records.
+
+### Changed
+
+- The README explains what repoward can enforce in each deployment, how a call flows through it, and
+  how to set it up in OpenCode.
+- `uvicorn` is now a direct dependency, for HTTP mode.
 
 ## [0.3.0] - 2026-11-06
 
