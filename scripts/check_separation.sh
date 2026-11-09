@@ -14,14 +14,14 @@ pass() { echo "ok: $*"; }
 useradd --system --home-dir /var/lib/repoward --create-home --shell /usr/sbin/nologin repoward
 chmod 700 /var/lib/repoward
 
-# 2. Install into a directory only root can change. The chmod matters when root's umask is loose.
-echo "umask here: $(umask), /opt is $(stat -c '%a %U' /opt)"
+# 2. Install into a directory only root can change. Do not rely on defaults: on GitHub's Ubuntu
+# machines, a new install under /opt came out world-writable, program included.
 python3 -m venv /opt/repoward
 /opt/repoward/bin/pip install --quiet "$WHEEL"
-echo "before chmod: $(stat -c '%a %U' /opt/repoward /opt/repoward/bin | tr '
-' ' ')python $(readlink -f "$(command -v python3)")"
-find /opt/repoward -perm -o+w -not -type l | head -5 | sed 's/^/world-writable: /'
 chmod -R go-w /opt/repoward
+if [ -n "$(find /opt/repoward -perm /go+w -not -type l)" ]; then
+  fail "the installation is still writable by others"
+fi
 
 # 3. The policy and the GitHub token, readable by the server's user only.
 sudo -u repoward REPOWARD_HOME=/var/lib/repoward /opt/repoward/bin/repoward init \
