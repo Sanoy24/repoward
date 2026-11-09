@@ -439,9 +439,12 @@ Limits:
 - **One process:** rate limits and legacy sessions live in memory, so run a single instance.
 - **Approvals:** the command line approvals still run on the server's host, so whoever approves needs
   access there. Review approval works as usual.
-- **Tested with:** locally signed tokens against real HTTP and real GitHub repositories, in both MCP
-  protocol versions. It has not yet been tested with a specific identity provider, so try yours on a
-  test setup first.
+- **Tested with:** Keycloak 26.8, as well as locally signed tokens against real GitHub repositories,
+  in both MCP protocol versions. Other identity providers have not been tried, so test yours first.
+
+With Keycloak, give the client an audience mapper that adds your `resource_server_url` to access
+tokens, and a group membership mapper with the claim name `groups` and full group path turned off.
+Without the first, every token is refused for the wrong audience.
 
 ## Pull request receipts
 
