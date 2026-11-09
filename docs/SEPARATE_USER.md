@@ -5,7 +5,7 @@ policy, the approvals database, the flow guard state and the audit log. An agent
 your own account can reach all of them. This guide puts them under a separate Linux user, and gives
 the agent's account permission to start the server and nothing else.
 
-Every step below is checked automatically on a fresh Ubuntu machine by
+Every step below is checked automatically on fresh Ubuntu and macOS machines by
 [scripts/check_separation.sh](https://github.com/Sanoy24/repoward/blob/main/scripts/check_separation.sh).
 It confirms that an agent account can call tools but cannot read the files, change them, approve
 requests or run anything else as the server's user.
@@ -81,6 +81,30 @@ with your repositories.
 
    The audit log then shows calls as `local:repoward`, the server's user.
 
+## On macOS
+
+The same steps work with three differences, also checked automatically:
+
+- macOS has no `useradd`. Create the users with `dscl`, using a free user and group ID, and keep
+  repoward's files in `/usr/local/var/repoward` instead of `/var/lib/repoward`:
+
+  ```bash
+  dscl . -create /Groups/repoward PrimaryGroupID 401
+  dscl . -create /Users/repoward
+  dscl . -create /Users/repoward UniqueID 401
+  dscl . -create /Users/repoward PrimaryGroupID 401
+  dscl . -create /Users/repoward UserShell /usr/bin/false
+  dscl . -create /Users/repoward NFSHomeDirectory /usr/local/var/repoward
+  dscl . -create /Users/repoward IsHidden 1
+  mkdir -p /usr/local/var/repoward
+  chown repoward:repoward /usr/local/var/repoward
+  chmod 700 /usr/local/var/repoward
+  ```
+
+- Use that directory wherever these steps say `/var/lib/repoward`, including in the launcher.
+- The system `python3` may be older than 3.11. Create the environment in step 2 with a newer one,
+  such as Homebrew's: `/opt/homebrew/bin/python3 -m venv /opt/repoward`.
+
 ## Approving and reviewing
 
 Run the command line tools as the server's user, from an account that has full `sudo` and is not the
@@ -104,7 +128,5 @@ sudo -u repoward REPOWARD_HOME=/var/lib/repoward /opt/repoward/bin/repoward audi
 - **Windows:** an MCP client cannot easily start a server as another Windows user. Run the server in
   WSL using this guide, or on another machine in [HTTP mode](https://github.com/Sanoy24/repoward#serving-over-http),
   where the agent only ever holds its own login token.
-- **macOS:** the same approach should work with `dscl` instead of `useradd`, but it has not been
-  tested.
 - **Other routes out:** the agent's other tools, such as a browser or other MCP servers, are not
   covered. GitHub-side protections, such as a ruleset on your default branch, still matter.
