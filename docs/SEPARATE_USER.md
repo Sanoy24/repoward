@@ -22,11 +22,14 @@ with your repositories.
    chmod 700 /var/lib/repoward
    ```
 
-2. Install repoward where only root can change it:
+2. Install repoward where only root can change it. The `chmod` matters: without it, a loose umask
+   can leave the installation writable by the agent, which could then plant code that runs as
+   `repoward`:
 
    ```bash
    python3 -m venv /opt/repoward
    /opt/repoward/bin/pip install repoward
+   chmod -R go-w /opt/repoward
    ```
 
 3. Create the policy, and store the GitHub token where only the server's user can read it:

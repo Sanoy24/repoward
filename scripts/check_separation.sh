@@ -14,9 +14,11 @@ pass() { echo "ok: $*"; }
 useradd --system --home-dir /var/lib/repoward --create-home --shell /usr/sbin/nologin repoward
 chmod 700 /var/lib/repoward
 
-# 2. Install into a directory only root can change.
+# 2. Install into a directory only root can change. The chmod matters when root's umask is loose.
+echo "umask here: $(umask), /opt is $(stat -c '%a %U' /opt)"
 python3 -m venv /opt/repoward
 /opt/repoward/bin/pip install --quiet "$WHEEL"
+chmod -R go-w /opt/repoward
 
 # 3. The policy and the GitHub token, readable by the server's user only.
 sudo -u repoward REPOWARD_HOME=/var/lib/repoward /opt/repoward/bin/repoward init \
