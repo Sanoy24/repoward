@@ -113,7 +113,8 @@ can enforce depends on where it runs relative to the agent:
 | The server runs under its own OS user, in a container, or on another host over HTTP | Only the MCP server | Policy, flow guard, approvals and audit, as long as the agent cannot read or write the token, policy, databases, audit log or HMAC key |
 
 With a shell on the same OS user, repoward only helps an agent that is misled and not trying to get
-around it. GitHub-side controls, such as a ruleset protecting your default branch, are the backstop
+around it. [Running repoward as its own user](https://github.com/Sanoy24/repoward/blob/main/docs/SEPARATE_USER.md)
+sets up the separated case on Linux, and is tested automatically. GitHub-side controls, such as a ruleset protecting your default branch, are the backstop
 in every case.
 
 By default it runs over stdio as one identity. To serve several people from one server, see
