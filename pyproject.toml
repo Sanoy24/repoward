@@ -39,6 +39,9 @@ Changelog = "https://github.com/Sanoy24/repoward/blob/main/CHANGELOG.md"
 [project.scripts]
 repoward = "repoward.cli:main"
 
+[project.optional-dependencies]
+keyring = ["keyring>=25,<26"]
+
 [dependency-groups]
 dev = [
     "mypy>=2.4",

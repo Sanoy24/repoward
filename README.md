@@ -347,6 +347,25 @@ Limits to know about:
 - `github_delete_branch` checks the commit and then deletes, because GitHub has no conditional
   delete, so a small window remains between the two.
 
+### Keeping the token out of config files
+
+Instead of putting the token in your MCP client's config, you can store it in your operating
+system's keychain, such as Windows Credential Manager or the macOS Keychain:
+
+```bash
+uvx --from 'repoward[keyring]' repoward token set
+```
+
+It asks for the token at a hidden prompt. Then leave `GITHUB_TOKEN` out of the client config, and
+launch the server with the same extra: `uvx --from 'repoward[keyring]' repoward serve`.
+`GITHUB_TOKEN` still takes precedence when it is set, and `repoward token status` and
+`repoward token delete` check and remove the stored token.
+
+This stops the token being copied or committed along with a config file. It does not hide it from
+an agent running a shell as you, which can read your keychain too. On a Linux server with no desktop
+keychain, use the environment file from
+[Running repoward as its own user](https://github.com/Sanoy24/repoward/blob/main/docs/SEPARATE_USER.md).
+
 ### Using a GitHub App instead
 
 A [GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)

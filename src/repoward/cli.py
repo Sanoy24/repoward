@@ -2,12 +2,14 @@
 
 import argparse
 import getpass
+import os
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
+from repoward.adapters import keychain
 from repoward.adapters.github_auth import AppConfigError
 from repoward.approvals.store import Approval, ApprovalStore, ApprovalStoreError
 from repoward.audit import (
@@ -343,6 +345,42 @@ def _policy_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def _token_set(args: argparse.Namespace) -> int:
+    token = getpass.getpass("GitHub token (input is hidden): ").strip()
+    if not token or any(char.isspace() for char in token):
+        _error("that does not look like a token, so nothing was stored")
+        return 1
+    try:
+        keychain.set_token(token)
+    except keychain.KeychainError as exc:
+        _error(str(exc))
+        return 1
+    print("Stored in the OS keychain. GITHUB_TOKEN still takes precedence when it is set.")
+    return 0
+
+
+def _token_status(args: argparse.Namespace) -> int:
+    try:
+        stored = keychain.get_token() is not None
+    except keychain.KeychainError as exc:
+        _error(str(exc))
+        return 1
+    print("A token is stored in the OS keychain." if stored else "No token is stored.")
+    if os.environ.get("GITHUB_TOKEN"):
+        print("GITHUB_TOKEN is set in this environment, so it is used instead.")
+    return 0
+
+
+def _token_delete(args: argparse.Namespace) -> int:
+    try:
+        removed = keychain.delete_token()
+    except keychain.KeychainError as exc:
+        _error(str(exc))
+        return 1
+    print("Removed the stored token." if removed else "No token was stored.")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="repoward", description=__doc__)
     parser.add_argument("--version", action="version", version=version("repoward"))
@@ -372,6 +410,15 @@ def _build_parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate-policy", help="check a policy file")
     validate.add_argument("path", type=Path, nargs="?")
     validate.set_defaults(run=_validate_policy)
+
+    token = commands.add_parser("token", help="keep the GitHub token in the OS keychain")
+    token_commands = token.add_subparsers(dest="token_command", required=True)
+    for name, handler, text in (
+        ("set", _token_set, "store a token, typed at a hidden prompt"),
+        ("status", _token_status, "say whether a token is stored"),
+        ("delete", _token_delete, "remove the stored token"),
+    ):
+        token_commands.add_parser(name, help=text).set_defaults(run=handler)
 
     policy = commands.add_parser("policy", help="work with policy files")
     policy_commands = policy.add_subparsers(dest="policy_command", required=True)
