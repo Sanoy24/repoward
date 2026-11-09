@@ -18,6 +18,9 @@ chmod 700 /var/lib/repoward
 echo "umask here: $(umask), /opt is $(stat -c '%a %U' /opt)"
 python3 -m venv /opt/repoward
 /opt/repoward/bin/pip install --quiet "$WHEEL"
+echo "before chmod: $(stat -c '%a %U' /opt/repoward /opt/repoward/bin | tr '
+' ' ')python $(readlink -f "$(command -v python3)")"
+find /opt/repoward -perm -o+w -not -type l | head -5 | sed 's/^/world-writable: /'
 chmod -R go-w /opt/repoward
 
 # 3. The policy and the GitHub token, readable by the server's user only.
